@@ -1,0 +1,70 @@
+
+services:
+
+  java-auth:
+    build: 
+      # Tells Docker which folder contains the Java Dockerfile
+      context: ./Java-Springboot-Auth
+    ports:
+      # Maps pc port 8080 to the container's port 8080
+      - "8080:8080"
+    env_file:
+      # Load the Neon Database password 
+      - .env 
+    networks:
+      # Attach to our custom private Wi-Fi network
+      - microservice-network
+
+  python-ws:
+    build: 
+      # Tell Docker which folder contains the Python Dockerfile
+      context: ./Python-Websocket
+    ports:
+      # Maps pc port 8000 to the container's port 8000
+      - "8000:8000"
+    environment:
+      # Tells the Python service where to find the Java service
+      - JAVA_AUTH_URL=http://java-auth:8080/auth/verify
+    networks:
+      # Attach to the same custom private Wi-Fi network
+      - microservice-network
+
+  go-webrtc:
+    build:
+      context: ./Golang-WebRTC 
+    ports:
+      - "8081:8081"
+    networks:
+      - microservice-network
+
+  python-ai-voice:
+    build:
+      context: ./Python-AI-Voice-ElevenLabs
+    ports:
+      - "8002:8002"
+    env_file:
+      # Load the API keys 
+      - .env
+    networks:
+      - microservice-network
+
+  react-frontend:
+    build:
+      context: ./React-Frontend 
+    ports:
+      # Map PC port 3000 to the container's Nginx port 80
+      - "3000:80"
+    networks:
+      # Attach to the same custom private Wi-Fi network
+      - microservice-network
+    depends_on:
+      # Ensure the backend is running before the frontend boots
+      - java-auth
+      - python-ws
+      - go-webrtc
+      - python-ai-voice
+
+
+networks:
+  microservice-network:
+    driver: bridge

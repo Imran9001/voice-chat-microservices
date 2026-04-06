@@ -1,0 +1,15 @@
+# Ignore compiled Java files
+target/
+build/
+*.jar
+*.war
+*.class
+
+# Ignore IDE settings
+.idea/
+.settings/
+.classpath
+.project
+
+# Ignore secrets
+.env

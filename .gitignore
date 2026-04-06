@@ -1,0 +1,28 @@
+# Security
+.env
+*.pem
+*.key
+
+# Windows System Files
+.DS_Store
+Thumbs.db
+
+# React
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+
+# Java / Spring Boot
+target/
+*.jar
+*.war
+
+# IDEs
+.vscode/
+.idea/

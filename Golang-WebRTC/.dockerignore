@@ -1,0 +1,12 @@
+# Ignore compiled Windows binaries
+*.exe
+*.test
+
+# Ignore vendor dependencies (Docker will download them)
+vendor/
+
+# Ignore IDE settings
+.idea/
+
+# Ignore secrets
+.env
