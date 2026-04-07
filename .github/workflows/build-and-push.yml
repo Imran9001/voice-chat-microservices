@@ -1,0 +1,51 @@
+name: Build and Push Microservices to ACR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: 
+
+jobs:
+  build-and-push-images:
+    runs-on: ubuntu-latest 
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    
+    - name: Log in to Azure Container Registry
+      uses: azure/docker-login@v2
+      with:
+        login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+        username: ${{ secrets.REGISTRY_USERNAME }}
+        password: ${{ secrets.REGISTRY_PASSWORD }}
+
+    - name: Build and Push React Frontend
+      run: |
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/react-frontend:latest ./React-Frontend
+        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/react-frontend:latest
+
+    - name: Build and Push Java Auth
+      run: |
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/java-auth:latest ./Java-Springboot-Auth
+        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/java-auth:latest
+
+    
+    - name: Build and Push Python Text Chat
+      run: |
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ws:latest ./Python-Websocket
+        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ws:latest
+
+   
+    - name: Build and Push Python AI Voice
+      run: |
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ai-voice:latest ./Python-AI-Voice-ElevenLabs
+        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ai-voice:latest
+
+    
+    - name: Build and Push Go WebRTC
+      run: |
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/go-webrtc:latest ./Golang-WebRTC
+        docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/go-webrtc:latest
