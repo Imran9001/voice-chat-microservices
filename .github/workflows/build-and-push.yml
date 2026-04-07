@@ -35,7 +35,7 @@ jobs:
     
     - name: Build and Push Python Text Chat
       run: |
-        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ws:latest ./Python-Websocket
+        docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ws:latest ./Python-WebSocket
         docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/python-ws:latest
 
    
