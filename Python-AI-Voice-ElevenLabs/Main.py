@@ -59,7 +59,7 @@ def get_volume(pcm_bytes):
         return 0
 
 
-@app.websocket("/api/ai")
+@app.websocket("/api/ai/ws/voice-changer")
 async def voice_changer_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("React connected! Calibrating noise floor...", flush=True)
