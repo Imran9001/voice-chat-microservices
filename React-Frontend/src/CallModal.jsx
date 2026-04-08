@@ -44,7 +44,14 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
                 localStreamRef.current = stream;
 
@@ -93,7 +100,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 await waitForICE(subPC);
                 if (!isMounted) return; 
 
-                // USING GO WEBRTC ENV
+                
                 const subResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/subscribe?streamID=${receiverUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subPC.localDescription)
                 });
@@ -196,7 +203,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             aiDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
             nextPlayTimeRef.current = 0;
 
-            // USING PYTHON AI WS ENV
             const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_AI_URL}/ws/voice-changer`);
             aiWsRef.current = ws;
             ws.binaryType = "arraybuffer"; 
@@ -241,7 +247,8 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
-            <audio ref={remoteAudioRef} autoPlay />
+            <audio ref={remoteAudioRef} autoPlay playsInline />
+            
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
                 {receiverUser?.[0]?.toUpperCase()}
             </Avatar>
@@ -257,7 +264,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     <SmartToyIcon />
                 </Fab>
 
-                <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "white", "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
+                <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
                     {isMuted ? <MicOffIcon /> : <MicIcon />}
                 </Fab>
 
