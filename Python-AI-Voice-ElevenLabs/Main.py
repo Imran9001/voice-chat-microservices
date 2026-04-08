@@ -17,6 +17,11 @@ groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 EPIC_VOICE_ID = "0CWKRX5zLmj12lDANbQk"
 
+GHOST_PHRASES = [
+    "thanks for watching.", "thanks for watching", 
+    "subscribe.", "subscribe", "a.", "oh.", "ah."
+]
+
 def normalize_audio(pcm_bytes, target_peak=0.9):
     samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
     if samples.size == 0:
@@ -54,10 +59,9 @@ def get_volume(pcm_bytes):
         return 0
 
 
-@app.websocket("/api/ai/ws/voice-changer")
+@app.websocket("/api/ai")
 async def voice_changer_endpoint(websocket: WebSocket):
     await websocket.accept()
-   
     print("React connected! Calibrating noise floor...", flush=True)
 
     calibration_samples = []
@@ -69,7 +73,10 @@ async def voice_changer_endpoint(websocket: WebSocket):
     silence_threshold = baseline + 500
     print(f"Calibrated! Baseline: {baseline:.0f} → Threshold: {silence_threshold:.0f}", flush=True)
 
+    
+    
     silence_limit = 2
+    
     min_phrase_bytes = 8000
     max_phrase_bytes = 16000 * 8
 
@@ -87,12 +94,18 @@ async def voice_changer_endpoint(websocket: WebSocket):
             transcription = await groq_client.audio.transcriptions.create(
                 file=("audio.wav", wav_io),
                 model="whisper-large-v3-turbo",
-                language="en"
+                language="en",
+                prompt="This is a direct voice recording of a human talking to an AI. Do not transcribe background noise. Do not include 'Thanks for watching', 'Subscribe', or 'Thank you' unless explicitly spoken."
             )
             transcript = transcription.text.strip()
 
-            if not transcript:
-                print("Empty transcript, skipping.", flush=True)
+            # SHORT/HALLUCINATION CHECK
+            if not transcript or len(transcript) < 2:
+                print("Empty/tiny transcript, skipping.", flush=True)
+                return
+            
+            if transcript.lower() in GHOST_PHRASES:
+                print(f" Ignored Whisper Hallucination: '{transcript}'", flush=True)
                 return
 
             print(f"Transcript: '{transcript}'", flush=True)
