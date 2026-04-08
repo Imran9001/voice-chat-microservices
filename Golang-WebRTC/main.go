@@ -32,14 +32,15 @@ func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 	}
 
 	activeStreams[streamID] = newTrack
-	fmt.Printf("️Created new audio stream: %s\n", streamID)
+	fmt.Printf("🎙️ Created new audio stream: %s\n", streamID)
 	return newTrack
 }
 
 func main() {
-	http.HandleFunc("/api/webrtc/publish", handlePublish)     // Send mic audio
-	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe) // Listen to other person audio
-	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)    // The 3-second echo
+	// 1. INGRESS PATH MATCHING
+	http.HandleFunc("/api/webrtc/publish", handlePublish)      // Send mic audio
+	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe)  // Listen to other person audio
+	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)     // The 3-second echo
 
 	fmt.Println("Go WebRTC Router is running on port 8081")
 	if err := http.ListenAndServe(":8081", nil); err != nil {
@@ -65,10 +66,24 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 
 	streamTrack := getOrCreateStream(streamID)
 
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	// 2. STUN SERVER CONFIGURATION
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
+
+	// 3. CONNECTION STATE LOGGER
+	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+		fmt.Printf("📡 PUBLISH ICE State [%s]: %s\n", streamID, connectionState.String())
+	})
 
 	peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		fmt.Printf("📡 Receiving live audio for [%s]\n", streamID)
@@ -104,10 +119,24 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	streamTrack := getOrCreateStream(streamID)
 
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	// 2. STUN SERVER CONFIGURATION
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
+
+	// 3. CONNECTION STATE LOGGER
+	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+		fmt.Printf("📡 SUBSCRIBE ICE State [%s]: %s\n", streamID, connectionState.String())
+	})
 
 	rtpSender, err := peerConnection.AddTrack(streamTrack)
 	if err != nil {
@@ -134,7 +163,22 @@ func handleTestMic(w http.ResponseWriter, r *http.Request) {
 	var offer webrtc.SessionDescription
 	json.NewDecoder(r.Body).Decode(&offer)
 
-	peerConnection, _ := webrtc.NewPeerConnection(webrtc.Configuration{})
+	// 2. STUN SERVER CONFIGURATION
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	peerConnection, _ := webrtc.NewPeerConnection(config)
+	
+	// 3. CONNECTION STATE LOGGER
+	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+		fmt.Printf("📡 TEST-MIC ICE State: %s\n", connectionState.String())
+	})
+
 	outputTrack, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion")
 	rtpSender, _ := peerConnection.AddTrack(outputTrack)
 
