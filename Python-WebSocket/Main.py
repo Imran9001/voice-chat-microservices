@@ -15,7 +15,7 @@ app.add_middleware(
 
 manager = connection_manager()
 
-# PATH LOGIC: Changed to "/"
+@app.websocket("/api/ws/ws")
 async def websocket_endpoint(websocket: WebSocket):
     token = websocket.query_params.get("token")
     receiver = websocket.query_params.get("receiver")
