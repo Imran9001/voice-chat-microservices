@@ -24,7 +24,7 @@ function LoginPage({onLogin}) {
   {
     try
     {
-      const response = await fetch ("http://localhost:8080/login",{
+      const response = await fetch (`${import.meta.env.VITE_JAVA_URL}/login`,{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({username:username,password:password})
