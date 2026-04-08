@@ -17,7 +17,6 @@ groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 EPIC_VOICE_ID = "0CWKRX5zLmj12lDANbQk"
 
-
 def normalize_audio(pcm_bytes, target_peak=0.9):
     samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
     if samples.size == 0:
@@ -28,14 +27,12 @@ def normalize_audio(pcm_bytes, target_peak=0.9):
     scale = min((32767 * target_peak) / peak, 2.0)
     return np.clip(samples * scale, -32768, 32767).astype(np.int16).tobytes()
 
-
 def boost_output_volume(pcm_bytes, multiplier=1.8):
     samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
     if samples.size == 0:
         return pcm_bytes
     boosted = np.clip(samples * multiplier, -32768, 32767)
     return boosted.astype(np.int16).tobytes()
-
 
 def create_wav_buffer(pcm_bytes, sample_rate=16000):
     wav_io = io.BytesIO()
@@ -47,7 +44,6 @@ def create_wav_buffer(pcm_bytes, sample_rate=16000):
     wav_io.seek(0)
     return wav_io
 
-
 def get_volume(pcm_bytes):
     try:
         samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
@@ -58,10 +54,11 @@ def get_volume(pcm_bytes):
         return 0
 
 
-@app.websocket("/ws/voice-changer")
+@app.websocket("/api/ai")
 async def voice_changer_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("React connected! Calibrating noise floor...")
+   
+    print("React connected! Calibrating noise floor...", flush=True)
 
     calibration_samples = []
     for _ in range(10):
@@ -70,7 +67,7 @@ async def voice_changer_endpoint(websocket: WebSocket):
 
     baseline = sum(calibration_samples) / len(calibration_samples) if calibration_samples else 500
     silence_threshold = baseline + 500
-    print(f" Calibrated! Baseline: {baseline:.0f} → Threshold: {silence_threshold:.0f}")
+    print(f"Calibrated! Baseline: {baseline:.0f} → Threshold: {silence_threshold:.0f}", flush=True)
 
     silence_limit = 2
     min_phrase_bytes = 8000
@@ -95,11 +92,11 @@ async def voice_changer_endpoint(websocket: WebSocket):
             transcript = transcription.text.strip()
 
             if not transcript:
-                print("Empty transcript, skipping.")
+                print("Empty transcript, skipping.", flush=True)
                 return
 
-            print(f"Transcript: '{transcript}'")
-            print("Sending to ElevenLabs TTS...")
+            print(f"Transcript: '{transcript}'", flush=True)
+            print("Sending to ElevenLabs TTS...", flush=True)
 
             async for audio_chunk in elevenlabs_client.text_to_speech.convert(
                 voice_id=EPIC_VOICE_ID,
@@ -118,10 +115,10 @@ async def voice_changer_endpoint(websocket: WebSocket):
                     louder_chunk = boost_output_volume(audio_chunk, multiplier=1.8)
                     await audio_queue.put(louder_chunk)
 
-            print("Done!")
+            print("Done sending audio back to React!", flush=True)
 
         except Exception as e:
-            print(f"Pipeline Error: {e}")
+            print(f"Pipeline Error: {e}", flush=True)
 
     async def queue_sender():
         while True:
@@ -142,7 +139,7 @@ async def voice_changer_endpoint(websocket: WebSocket):
 
             if volume > silence_threshold:
                 if not is_speaking:
-                    print("\n Started speaking...")
+                    print("\nStarted speaking...", flush=True)
                     for pre_chunk in pre_roll:
                         pcm_buffer.extend(pre_chunk)
                 is_speaking = True
@@ -160,7 +157,7 @@ async def voice_changer_endpoint(websocket: WebSocket):
                 silence_count = 0
 
                 if len(pcm_buffer) >= min_phrase_bytes:
-                    print(f"Phrase complete ({reason}). Processing...")
+                    print(f"Phrase complete ({reason}). Processing...", flush=True)
                     normalized_audio = normalize_audio(bytes(pcm_buffer))
                     wav_io = create_wav_buffer(normalized_audio)
                     pcm_buffer.clear()
@@ -169,13 +166,12 @@ async def voice_changer_endpoint(websocket: WebSocket):
                     pcm_buffer.clear()
 
     except WebSocketDisconnect:
-        print("React disconnected.")
+        print("React disconnected.", flush=True)
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"Unexpected error: {e}", flush=True)
     finally:
         await audio_queue.put(None)
         await sender_task
-
 
 if __name__ == "__main__":
     import uvicorn
