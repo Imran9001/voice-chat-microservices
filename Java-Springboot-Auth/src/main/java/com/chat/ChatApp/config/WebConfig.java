@@ -14,7 +14,7 @@ public class WebConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**") // Allow ALL endpoints
-                        .allowedOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://voicechat.it.com")
+                        .allowedOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "https://voicechat.it.com")
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") // Allow these actions
                         .allowedHeaders("*") // Allow all headers
                         .allowCredentials(true);
