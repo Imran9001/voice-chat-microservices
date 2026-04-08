@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 import com.chat.ChatApp.repo.UserRepo;
 
 @RestController
+@RequestMapping("/api/auth")
 public class UserController {
 
     @Autowired
