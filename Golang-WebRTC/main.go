@@ -37,9 +37,9 @@ func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 }
 
 func main() {
-	http.HandleFunc("/publish", handlePublish)     // Send mic audio
-	http.HandleFunc("/subscribe", handleSubscribe) // Listen to other person audio
-	http.HandleFunc("/test-mic", handleTestMic)    // The 3-second echo
+	http.HandleFunc("/api/webrtc/publish", handlePublish)     // Send mic audio
+	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe) // Listen to other person audio
+	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)    // The 3-second echo
 
 	fmt.Println("Go WebRTC Router is running on port 8081")
 	if err := http.ListenAndServe(":8081", nil); err != nil {
