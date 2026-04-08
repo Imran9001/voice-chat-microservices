@@ -33,7 +33,7 @@ public class SecurityConfig {
         http.cors(Customizer.withDefaults());
         http.csrf(customizer -> customizer.disable());
         http.authorizeHttpRequests(request -> request
-                .requestMatchers("/login", "/register","/users", "/auth/**")
+                .requestMatchers("/api/auth/**")
                 .permitAll()
                 .anyRequest().authenticated()
         );
