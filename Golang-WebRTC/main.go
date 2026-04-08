@@ -32,7 +32,7 @@ func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 	}
 
 	activeStreams[streamID] = newTrack
-	fmt.Printf("🎙️ Created new audio stream: %s\n", streamID)
+	fmt.Printf("Created new audio stream: %s\n", streamID)
 	return newTrack
 }
 
@@ -82,11 +82,11 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 
 	// 3. CONNECTION STATE LOGGER
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("📡 PUBLISH ICE State [%s]: %s\n", streamID, connectionState.String())
+		fmt.Printf("PUBLISH ICE State [%s]: %s\n", streamID, connectionState.String())
 	})
 
 	peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		fmt.Printf("📡 Receiving live audio for [%s]\n", streamID)
+		fmt.Printf("Receiving live audio for [%s]\n", streamID)
 		buf := make([]byte, 1500)
 		for {
 			n, _, err := track.Read(buf)
@@ -135,7 +135,7 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 3. CONNECTION STATE LOGGER
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("📡 SUBSCRIBE ICE State [%s]: %s\n", streamID, connectionState.String())
+		fmt.Printf("SUBSCRIBE ICE State [%s]: %s\n", streamID, connectionState.String())
 	})
 
 	rtpSender, err := peerConnection.AddTrack(streamTrack)
@@ -147,7 +147,7 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		rtcpBuf := make([]byte, 1500)
 		for {
 			if _, _, err := rtpSender.Read(rtcpBuf); err != nil {
-				fmt.Printf("🎧 Listener left [%s]\n", streamID)
+				fmt.Printf("Listener left [%s]\n", streamID)
 				return
 			}
 		}
@@ -176,7 +176,7 @@ func handleTestMic(w http.ResponseWriter, r *http.Request) {
 	
 	// 3. CONNECTION STATE LOGGER
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("📡 TEST-MIC ICE State: %s\n", connectionState.String())
+		fmt.Printf("TEST-MIC ICE State: %s\n", connectionState.String())
 	})
 
 	outputTrack, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion")
