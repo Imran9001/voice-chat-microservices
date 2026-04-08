@@ -264,7 +264,8 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     <SmartToyIcon />
                 </Fab>
 
-                <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
+                {/* --- FIX APPLIED HERE --- */}
+                <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "white", "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
                     {isMuted ? <MicOffIcon /> : <MicIcon />}
                 </Fab>
 
