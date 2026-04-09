@@ -15,7 +15,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
-    const [audioBlocked, setAudioBlocked] = useState(false); // Tracks if the phone blocked autoplay
+    const [audioBlocked, setAudioBlocked] = useState(true); // Tracks if the phone blocked autoplay
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
