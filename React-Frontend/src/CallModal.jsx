@@ -284,5 +284,3 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 }
 
 export default CallModal;
-
-export default CallModal;
