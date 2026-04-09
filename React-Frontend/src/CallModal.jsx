@@ -7,7 +7,6 @@ import CelebrationIcon from '@mui/icons-material/Celebration';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'; 
 import CampaignIcon from '@mui/icons-material/Campaign'; 
 import SmartToyIcon from '@mui/icons-material/SmartToy'; 
-import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 
 import processorUrl from './processor.js?url';
 
@@ -15,7 +14,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
-    const [remoteVolume, setRemoteVolume] = useState(0); // VISUAL METER STATE
+    const [remoteVolume, setRemoteVolume] = useState(0); 
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
@@ -31,8 +30,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     
     const workletNodeRef = useRef(null);
     const micSourceRef = useRef(null);
-    const androidBypassCtxRef = useRef(null);
-    const animationFrameRef = useRef(null); // Keeps track of our visual meter loop
+    const animationFrameRef = useRef(null); 
 
     useEffect(() => {
         peerJoinedRef.current = peerHasJoined;
@@ -48,6 +46,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
+                // iOS Base64 Primer
                 try {
                     const primer = new Audio();
                     primer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
@@ -100,16 +99,17 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
                 subPC.ontrack = (event) => {
                     if (event.streams && event.streams[0]) {
+                        // Prevent Android Garbage Collection
                         window.persistentWebRTCStream = event.streams[0];
                         
-                        // STANDARD PLAYER
+                        // Standard HTML5 Playback
                         if (remoteAudioRef.current) {
                             remoteAudioRef.current.srcObject = event.streams[0];
                             remoteAudioRef.current.volume = 1.0;
-                            remoteAudioRef.current.play().catch(err => console.warn(err));
+                            remoteAudioRef.current.play().catch(err => console.warn("Playback exception:", err));
                         }
                         
-                        // --- VISUAL VOLUME METER LOGIC ---
+                        // Visual Volume Meter Logic
                         try {
                             const AudioContext = window.AudioContext || window.webkitAudioContext;
                             const analyzeCtx = new AudioContext();
@@ -127,7 +127,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                                     sum += dataArray[i];
                                 }
                                 const average = sum / dataArray.length;
-                                // Map 0-255 to 0-100 for the progress bar
                                 setRemoteVolume(Math.min(100, Math.round((average / 128) * 100)));
                                 
                                 animationFrameRef.current = requestAnimationFrame(updateMeter);
@@ -136,7 +135,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                         } catch (e) {
                             console.error("Analyzer failed to start", e);
                         }
-                        // ----------------------------------
 
                         if (isMounted) {
                             setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
@@ -172,16 +170,13 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             if (aiWsRef.current) aiWsRef.current.close();
             if (audioContextRef.current) audioContextRef.current.close();
             
-            if (androidBypassCtxRef.current) {
-                androidBypassCtxRef.current.close();
-                androidBypassCtxRef.current = null;
-            }
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
             window.persistentWebRTCStream = null;
 
             setStatus("Connecting to server..."); 
             setIsMuted(false); 
             setIsAIActive(false);
+            setRemoteVolume(0);
         };
     }, [isOpen, currentUser, receiverUser, onClose]); 
 
@@ -197,30 +192,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         if (localStreamRef.current) {
             localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !track.enabled; });
             setIsMuted((prev) => !prev);
-        }
-    };
-    
-    const forceAndroidAudio = () => {
-        if (remoteAudioRef.current) {
-            remoteAudioRef.current.volume = 1.0;
-            remoteAudioRef.current.muted = false;
-            remoteAudioRef.current.play().catch(e => console.warn(e));
-        }
-        try {
-            const stream = window.persistentWebRTCStream || (remoteAudioRef.current && remoteAudioRef.current.srcObject);
-            if (stream) {
-                if (!androidBypassCtxRef.current) {
-                    const AudioContext = window.AudioContext || window.webkitAudioContext;
-                    androidBypassCtxRef.current = new AudioContext();
-                    const source = androidBypassCtxRef.current.createMediaStreamSource(stream);
-                    source.connect(androidBypassCtxRef.current.destination);
-                }
-                androidBypassCtxRef.current.resume().catch(e => console.warn("Bypass resume failed:", e));
-            } else {
-                console.warn("Force audio: stream not available yet.");
-            }
-        } catch(err) {
-            console.error("Bypass failed:", err.message);
         }
     };
     
@@ -331,7 +302,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             </Avatar>
             <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>{receiverUser}</Typography>
             
-            {/* VISUAL VOLUME METER */}
             <Box sx={{ width: '60%', mb: 1 }}>
                 <Typography variant="caption" sx={{ color: "#94a3b8", display: 'block', textAlign: 'center', mb: 0.5 }}>
                     Incoming Audio Signal
@@ -349,16 +319,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             </Box>
             
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
-
-            <Fab 
-                variant="extended" 
-                color="error" 
-                onClick={forceAndroidAudio}
-                sx={{ mb: 3, px: 4, fontWeight: 'bold' }}
-            >
-                <VolumeUpIcon sx={{ mr: 1 }} />
-                Force Audio (Nuke)
-            </Fab>
 
             <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
