@@ -7,6 +7,7 @@ import CelebrationIcon from '@mui/icons-material/Celebration';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'; 
 import CampaignIcon from '@mui/icons-material/Campaign'; 
 import SmartToyIcon from '@mui/icons-material/SmartToy'; 
+import VolumeUpIcon from '@mui/icons-material/VolumeUp'; // Icon for the mobile unmute button
 
 import processorUrl from './processor.js?url';
 
@@ -14,6 +15,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
+    const [audioBlocked, setAudioBlocked] = useState(false); // Tracks if the phone blocked autoplay
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
@@ -44,7 +46,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
-                // THE HOLY TRINITY: Strips friend's voice and background noise before AI hears it
+                // THE HOLY TRINITY
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: true,
@@ -71,7 +73,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 await waitForICE(pubPC);
                 if (!isMounted) return; 
 
-                // USING GO WEBRTC ENV
                 const pubResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pubPC.localDescription)
                 });
@@ -91,10 +92,11 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     if (remoteAudioRef.current) {
                         remoteAudioRef.current.srcObject = event.streams[0];
                         
-                        // --- THE MOBILE FIX ---
-                        // Forces the mobile browser to play the audio, overriding autoplay blocks
+                        // --- THE MOBILE UI FIX ---
+                        // Try to play. If the browser blocks it, show the "Tap to Hear Call" button
                         remoteAudioRef.current.play().catch(err => {
-                            console.warn("Mobile browser blocked autoplay. Needs interaction:", err);
+                            console.warn("Mobile browser blocked autoplay. Surfacing UI button:", err);
+                            if (isMounted) setAudioBlocked(true);
                         });
 
                         if (isMounted) {
@@ -135,6 +137,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             setStatus("Connecting to server..."); 
             setIsMuted(false); 
             setIsAIActive(false);
+            setAudioBlocked(false);
         };
     }, [isOpen, currentUser, receiverUser, onClose]); 
 
@@ -153,8 +156,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         }
     };
     
-    // RAW PCM PLAYER
-    // Decodes the raw math from ElevenLabs for zero-delay playback
     const playRawPCMChunk = (arrayBuffer) => {
         if (!audioContextRef.current || !aiDestinationRef.current) return;
         
@@ -197,7 +198,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             audioContextRef.current = null;
             aiDestinationRef.current = null;
 
-            // RESTORE REAL VOICE: Swap the WebRTC track back to the real microphone
             const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
             if (sender && localStreamRef.current) {
                 sender.replaceTrack(localStreamRef.current.getAudioTracks()[0]);
@@ -210,7 +210,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             aiDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
             nextPlayTimeRef.current = 0;
 
-            // START BROADCAST: Swap WebRTC track to the AI's destination node immediately
             const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
             if (sender) { sender.replaceTrack(aiDestinationRef.current.stream.getAudioTracks()[0]); }
 
@@ -221,7 +220,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             ws.onopen = async () => {
                 try {
                     await audioContextRef.current.audioWorklet.addModule(processorUrl);
-                    // Pass the hardware-filtered stream to the AI
                     micSourceRef.current = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
                     workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
                     
@@ -261,14 +259,31 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
-            {/* Added playsInline to prevent iPhones from launching full-screen media players */}
-            <audio ref={remoteAudioRef} autoPlay playsInline />
+            {/* Hidden native audio player */}
+            <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
             
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
                 {receiverUser?.[0]?.toUpperCase()}
             </Avatar>
             <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
+
+            {audioBlocked && (
+                <Fab 
+                    variant="extended" 
+                    color="success" 
+                    onClick={() => {
+                        if (remoteAudioRef.current) {
+                            remoteAudioRef.current.play();
+                        }
+                        setAudioBlocked(false); // Hide button after clicking
+                    }}
+                    sx={{ mb: 3, px: 4, fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}
+                >
+                    <VolumeUpIcon sx={{ mr: 1 }} />
+                    Tap to Hear Call
+                </Fab>
+            )}
 
             <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
@@ -287,6 +302,16 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     <CallEndIcon sx={{ mr: 1 }} /> End
                 </Fab>
             </Box>
+
+            <style>
+                {`
+                @keyframes pulse {
+                    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+                    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+                    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+                }
+                `}
+            </style>
         </Paper>
     );
 }
