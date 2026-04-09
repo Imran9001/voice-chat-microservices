@@ -46,16 +46,30 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
-                // THE HOLY TRINITY
+                // FIX 1: Prime the iOS audio session before getUserMedia.
+                // iOS can switch to "playback" mode when audio plays, killing mic capture.
+                try {
+                    const primer = new Audio();
+                    primer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+                    await primer.play();
+                    primer.pause();
+                } catch (_) {}
+
+                // FIX 2: Use `ideal` constraints instead of strict booleans.
+                // Strict `true` can cause Android/iOS to grant a silenced/broken track.
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
+                        echoCancellation: { ideal: true },
+                        noiseSuppression: { ideal: true },
+                        autoGainControl: { ideal: true }
                     } 
                 });
                 
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
+
+                // FIX 3: Explicitly force tracks enabled — some mobile browsers init them as false.
+                stream.getAudioTracks().forEach(track => { track.enabled = true; });
+
                 localStreamRef.current = stream;
 
                 const pubPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -71,8 +85,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 const pubOffer = await pubPC.createOffer();
                 await pubPC.setLocalDescription(pubOffer);
                 await waitForICE(pubPC);
-                if (!isMounted) return; 
-
+                if (!isMounted) return;
                 const pubResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pubPC.localDescription)
                 });
@@ -197,9 +210,14 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             audioContextRef.current = null;
             aiDestinationRef.current = null;
 
-            const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
+            // FIX 4: Restore real mic track respecting current mute state.
+            const sender = publishPCRef.current.getSenders().find(s => s.track?.kind === 'audio');
             if (sender && localStreamRef.current) {
-                sender.replaceTrack(localStreamRef.current.getAudioTracks()[0]);
+                const realTrack = localStreamRef.current.getAudioTracks()[0];
+                if (realTrack) {
+                    realTrack.enabled = !isMuted;
+                    sender.replaceTrack(realTrack);
+                }
             }
         } else {
             setIsAIActive(true);
@@ -289,7 +307,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     Tap to Hear Call
                 </Fab>
             )}
-
             <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx2.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_2__"); }} sx={{ bgcolor: "#334155", color: "#38bdf8", "&:hover": { bgcolor: "#475569" } }}><NotificationsActiveIcon /></Fab>
