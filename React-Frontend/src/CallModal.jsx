@@ -31,6 +31,9 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const workletNodeRef = useRef(null);
     const micSourceRef = useRef(null);
 
+    // FIX: Store bypass context in a ref, not window, so cleanup is reliable
+    const androidBypassCtxRef = useRef(null);
+
     useEffect(() => {
         peerJoinedRef.current = peerHasJoined;
         if (peerHasJoined) {
@@ -96,15 +99,16 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 };
 
                 subPC.ontrack = (event) => {
-                    if (remoteAudioRef.current) {
-                        remoteAudioRef.current.srcObject = event.streams[0];
+                    if (event.streams && event.streams[0]) {
+                        // Backup stream to global window to prevent Android garbage collection
+                        window.persistentWebRTCStream = event.streams[0];
                         
-                        // Force Chrome Android to apply max volume instantly
-                        remoteAudioRef.current.volume = 1.0;
-                        remoteAudioRef.current.play().catch(err => {
-                            console.warn("Mobile browser blocked autoplay:", err);
-                        });
-
+                        if (remoteAudioRef.current) {
+                            remoteAudioRef.current.srcObject = event.streams[0];
+                            remoteAudioRef.current.volume = 1.0;
+                            remoteAudioRef.current.play().catch(err => console.warn(err));
+                        }
+                        
                         if (isMounted) {
                             setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
                         }
@@ -140,6 +144,13 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             if (aiWsRef.current) aiWsRef.current.close();
             if (audioContextRef.current) audioContextRef.current.close();
 
+            // FIX: Clean up bypass context and stream on call end
+            if (androidBypassCtxRef.current) {
+                androidBypassCtxRef.current.close();
+                androidBypassCtxRef.current = null;
+            }
+            window.persistentWebRTCStream = null;
+
             setStatus("Connecting to server..."); 
             setIsMuted(false); 
             setIsAIActive(false);
@@ -161,46 +172,57 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         }
     };
     
-    // --- ANDROID OVERRIDE FUNCTION ---
-    // Forces Chrome to re-evaluate the audio element and push it to the speakers
+    // --- THE NUCLEAR OPTION: DIRECT HARDWARE ROUTING ---
     const forceAndroidAudio = () => {
+        // 1. Wake up standard player just in case
         if (remoteAudioRef.current) {
             remoteAudioRef.current.volume = 1.0;
             remoteAudioRef.current.muted = false;
-            remoteAudioRef.current.play().then(() => {
-                alert("Audio stream forced to play! Check your physical volume buttons.");
-            }).catch(e => {
-                alert("Browser Error: " + e.message);
-            });
+            remoteAudioRef.current.play().catch(e => console.warn(e));
+        }
+
+        // 2. Bypass HTML5 player entirely and pipe directly to the physical speakers.
+        // FIX: Use ref instead of window.androidBypassCtx so cleanup works correctly.
+        try {
+            const stream = window.persistentWebRTCStream || (remoteAudioRef.current && remoteAudioRef.current.srcObject);
+            if (stream) {
+                if (!androidBypassCtxRef.current) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    androidBypassCtxRef.current = new AudioContext();
+                    const source = androidBypassCtxRef.current.createMediaStreamSource(stream);
+                    source.connect(androidBypassCtxRef.current.destination);
+                }
+                
+                // FIX: No alert() — it blocks the JS thread and can kill AudioContext.resume() on Android
+                androidBypassCtxRef.current.resume().catch(e => console.warn("Bypass resume failed:", e));
+            } else {
+                console.warn("Force audio: stream not available yet.");
+            }
+        } catch(err) {
+            console.error("Bypass failed:", err.message);
         }
     };
     
     const playRawPCMChunk = (arrayBuffer) => {
         if (!audioContextRef.current || !aiDestinationRef.current) return;
-        
         try {
             const byteLength = arrayBuffer.byteLength - (arrayBuffer.byteLength % 2);
             const int16Array = new Int16Array(arrayBuffer, 0, byteLength / 2);
             const float32Array = new Float32Array(int16Array.length);
-            
             for (let i = 0; i < int16Array.length; i++) {
                 float32Array[i] = int16Array[i] / 32768.0; 
             }
-
             const audioBuffer = audioContextRef.current.createBuffer(1, float32Array.length, 16000);
             audioBuffer.getChannelData(0).set(float32Array);
-
             const source = audioContextRef.current.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(aiDestinationRef.current);
-
             const currentTime = audioContextRef.current.currentTime;
             if (nextPlayTimeRef.current < currentTime) {
                 nextPlayTimeRef.current = currentTime;
             }
             source.start(nextPlayTimeRef.current);
             nextPlayTimeRef.current += audioBuffer.duration;
-            
         } catch (e) {
             console.error("Error playing raw AI stream:", e);
         }
@@ -227,7 +249,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             }
         } else {
             setIsAIActive(true);
-            
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             audioContextRef.current = new AudioContext({ sampleRate: 16000 });
             aiDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
@@ -282,7 +303,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
-            {/* THE CSS FIX: Chrome Android will suspend 'display: none', so we make it 1px and transparent instead */}
             <audio ref={remoteAudioRef} autoPlay playsInline style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} />
             
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
@@ -291,15 +311,15 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
 
-            {/* MANUAL ANDROID OVERRIDE BUTTON */}
+            {/* THE RED NUKE BUTTON */}
             <Fab 
                 variant="extended" 
-                color="info" 
+                color="error" 
                 onClick={forceAndroidAudio}
                 sx={{ mb: 3, px: 4, fontWeight: 'bold' }}
             >
                 <VolumeUpIcon sx={{ mr: 1 }} />
-                Force Audio Route
+                Force Audio (Nuke)
             </Fab>
 
             <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
