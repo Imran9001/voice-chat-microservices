@@ -90,6 +90,13 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 subPC.ontrack = (event) => {
                     if (remoteAudioRef.current) {
                         remoteAudioRef.current.srcObject = event.streams[0];
+                        
+                        // --- THE MOBILE FIX ---
+                        // Forces the mobile browser to play the audio, overriding autoplay blocks
+                        remoteAudioRef.current.play().catch(err => {
+                            console.warn("Mobile browser blocked autoplay. Needs interaction:", err);
+                        });
+
                         if (isMounted) {
                             setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
                         }
@@ -214,7 +221,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             ws.onopen = async () => {
                 try {
                     await audioContextRef.current.audioWorklet.addModule(processorUrl);
-                    // Pass the hardware-filtered stream to the AI (ignoring the friend's voice)
+                    // Pass the hardware-filtered stream to the AI
                     micSourceRef.current = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
                     workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
                     
@@ -254,6 +261,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
+            {/* Added playsInline to prevent iPhones from launching full-screen media players */}
             <audio ref={remoteAudioRef} autoPlay playsInline />
             
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
