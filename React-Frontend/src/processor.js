@@ -1,8 +1,17 @@
 class PCMProcessor extends AudioWorkletProcessor {
+    // This allows React to send a Mute signal to the processor 
+    // when the AI is speaking through your speakers.
+    static get parameterDescriptors() {
+        return [{
+            name: 'isAiTalking',
+            defaultValue: 0,
+            minValue: 0,
+            maxValue: 1
+        }];
+    }
+
     constructor() {
         super();
-        // We buffer 4096 samples at a time before sending to React.
-        // At 16kHz, this equals about 250 milliseconds of audio.
         this.bufferSize = 4096;
         this.buffer = new Float32Array(this.bufferSize);
         this.bytesWritten = 0;
@@ -10,7 +19,10 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     process(inputs, outputs, parameters) {
         const input = inputs[0];
-        if (input.length > 0) {
+        // 0 = Mic is Open, 1 = AI is talking (Mute Mic)
+        const isAiTalking = parameters.isAiTalking ? parameters.isAiTalking[0] : 0;
+
+        if (input.length > 0 && isAiTalking === 0) {
             const channelData = input[0];
             for (let i = 0; i < channelData.length; i++) {
                 this.buffer[this.bytesWritten++] = channelData[i];
@@ -23,15 +35,14 @@ class PCMProcessor extends AudioWorkletProcessor {
     }
 
     flush() {
-        // The browser captures audio in high-res Float32 (-1.0 to 1.0)
-        // ElevenLabs needs standard Int16 format (-32768 to 32767). We convert it here!
+        // Convert Float32 to Int16
         const int16Buffer = new Int16Array(this.bufferSize);
         for (let i = 0; i < this.bufferSize; i++) {
             let s = Math.max(-1, Math.min(1, this.buffer[i]));
             int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
         
-        // Blast the raw math over to React
+        // Send the raw bytes to the main thread
         this.port.postMessage(int16Buffer.buffer, [int16Buffer.buffer]);
         this.bytesWritten = 0;
         this.buffer = new Float32Array(this.bufferSize);
