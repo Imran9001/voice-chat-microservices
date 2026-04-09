@@ -1,341 +1,191 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Box, Typography, Avatar, Fab, Paper } from "@mui/material";
-import CallEndIcon from '@mui/icons-material/CallEnd';
-import MicIcon from '@mui/icons-material/Mic';
-import MicOffIcon from '@mui/icons-material/MicOff';
-import CelebrationIcon from '@mui/icons-material/Celebration'; 
-import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'; 
-import CampaignIcon from '@mui/icons-material/Campaign'; 
-import SmartToyIcon from '@mui/icons-material/SmartToy'; 
-import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from elevenlabs import AsyncElevenLabs, VoiceSettings
+from groq import AsyncGroq
+import asyncio
+import io
+import wave
+import numpy as np
+import os
+from collections import deque
 
-import processorUrl from './processor.js?url';
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, sendSignal }) {
-    const [status, setStatus] = useState("Connecting to server...");
-    const [isMuted, setIsMuted] = useState(false); 
-    const [isAIActive, setIsAIActive] = useState(false);
-    const [audioBlocked, setAudioBlocked] = useState(false); // Set to false so it only shows when truly blocked
+elevenlabs_client = AsyncElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+
+EPIC_VOICE_ID = "0CWKRX5zLmj12lDANbQk"
+
+GHOST_PHRASES = [
+    "thanks for watching.", "thanks for watching", 
+    "subscribe.", "subscribe", "a.", "oh.", "ah."
+]
+
+def normalize_audio(pcm_bytes, target_peak=0.9):
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+    if samples.size == 0:
+        return pcm_bytes
+    peak = np.max(np.abs(samples))
+    if peak == 0:
+        return pcm_bytes
+    scale = min((32767 * target_peak) / peak, 2.0)
+    return np.clip(samples * scale, -32768, 32767).astype(np.int16).tobytes()
+
+def boost_output_volume(pcm_bytes, multiplier=1.8):
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+    if samples.size == 0:
+        return pcm_bytes
+    boosted = np.clip(samples * multiplier, -32768, 32767)
+    return boosted.astype(np.int16).tobytes()
+
+def create_wav_buffer(pcm_bytes, sample_rate=16000):
+    wav_io = io.BytesIO()
+    with wave.open(wav_io, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm_bytes)
+    wav_io.seek(0)
+    return wav_io
+
+def get_volume(pcm_bytes):
+    try:
+        samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+        if len(samples) == 0:
+            return 0
+        return float(np.sqrt(np.mean(samples ** 2)))
+    except Exception:
+        return 0
+
+
+@app.websocket("/api/ai/ws/voice-changer")
+async def voice_changer_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("React connected! Calibrating noise floor...", flush=True)
+
+    calibration_samples = []
+    for _ in range(10):
+        chunk = await websocket.receive_bytes()
+        calibration_samples.append(get_volume(chunk))
+
+    baseline = sum(calibration_samples) / len(calibration_samples) if calibration_samples else 500
+    silence_threshold = baseline + 500
+    print(f"Calibrated! Baseline: {baseline:.0f} → Threshold: {silence_threshold:.0f}", flush=True)
+
     
-    const publishPCRef = useRef(null);
-    const subscribePCRef = useRef(null);
-    const localStreamRef = useRef(null);
-    const remoteAudioRef = useRef(null);
-    const sfxPlayerRef = useRef(new Audio());
-    const peerJoinedRef = useRef(peerHasJoined);
-
-    const aiWsRef = useRef(null);
-    const audioContextRef = useRef(null);
-    const aiDestinationRef = useRef(null);
-    const nextPlayTimeRef = useRef(0); 
     
-    const workletNodeRef = useRef(null);
-    const micSourceRef = useRef(null);
-
-    useEffect(() => {
-        peerJoinedRef.current = peerHasJoined;
-        if (peerHasJoined) {
-            setStatus("Connected!");
-        }
-    }, [peerHasJoined]);
-
-    useEffect(() => {
-        if (!isOpen) return;
-
-        let isMounted = true; 
-
-        const startCall = async () => {
-            try {
-                // FIX 1: Prime the iOS audio session before getUserMedia.
-                // iOS can switch to "playback" mode when audio plays, killing mic capture.
-                try {
-                    const primer = new Audio();
-                    primer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-                    await primer.play();
-                    primer.pause();
-                } catch (_) {}
-
-                // FIX 2: Use `ideal` constraints instead of strict booleans.
-                // Strict `true` can cause Android/iOS to grant a silenced/broken track.
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: { ideal: true },
-                        noiseSuppression: { ideal: true },
-                        autoGainControl: { ideal: true }
-                    } 
-                });
-                
-                if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
-
-                // FIX 3: Explicitly force tracks enabled — some mobile browsers init them as false.
-                stream.getAudioTracks().forEach(track => { track.enabled = true; });
-
-                localStreamRef.current = stream;
-
-                const pubPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-                publishPCRef.current = pubPC;
-                stream.getTracks().forEach(track => pubPC.addTrack(track, stream));
-                
-                pubPC.oniceconnectionstatechange = () => {
-                    if (pubPC.iceConnectionState === "disconnected" || pubPC.iceConnectionState === "failed") {
-                        if (isMounted) onClose(); 
-                    }
-                };
-
-                const pubOffer = await pubPC.createOffer();
-                await pubPC.setLocalDescription(pubOffer);
-                await waitForICE(pubPC);
-                if (!isMounted) return;
-                const pubResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
-                    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pubPC.localDescription)
-                });
-                await pubPC.setRemoteDescription(await pubResponse.json());
-
-                const subPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-                subscribePCRef.current = subPC;
-                subPC.addTransceiver('audio', { direction: 'recvonly' });
-
-                subPC.oniceconnectionstatechange = () => {
-                    if (subPC.iceConnectionState === "disconnected" || subPC.iceConnectionState === "failed") {
-                        if (isMounted) onClose(); 
-                    }
-                };
-
-                subPC.ontrack = (event) => {
-                    if (remoteAudioRef.current) {
-                        remoteAudioRef.current.srcObject = event.streams[0];
-                        
-                        // Mobile UI Fix Trigger
-                        remoteAudioRef.current.play().catch(err => {
-                            console.warn("Mobile browser blocked autoplay. Surfacing UI button:", err);
-                            if (isMounted) setAudioBlocked(true);
-                        });
-
-                        if (isMounted) {
-                            setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
-                        }
-                    }
-                };
-
-                const subOffer = await subPC.createOffer();
-                await subPC.setLocalDescription(subOffer);
-                await waitForICE(subPC);
-                if (!isMounted) return; 
-                
-                const subResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/subscribe?streamID=${receiverUser}_Mic`, {
-                    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subPC.localDescription)
-                });
-                await subPC.setRemoteDescription(await subResponse.json());
-
-            } catch (error) {
-                if (isMounted) { console.error("Call failed:", error); setStatus("Call Failed"); }
-            }
-        };
-
-        startCall();
-
-        return () => {
-            isMounted = false; 
-            if (publishPCRef.current) publishPCRef.current.close();
-            if (subscribePCRef.current) subscribePCRef.current.close();
-            if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
-            if (sfxPlayerRef.current) sfxPlayerRef.current.pause();
-
-            if (workletNodeRef.current) workletNodeRef.current.disconnect();
-            if (micSourceRef.current) micSourceRef.current.disconnect();
-            if (aiWsRef.current) aiWsRef.current.close();
-            if (audioContextRef.current) audioContextRef.current.close();
-
-            setStatus("Connecting to server..."); 
-            setIsMuted(false); 
-            setIsAIActive(false);
-            setAudioBlocked(false);
-        };
-    }, [isOpen, currentUser, receiverUser, onClose]); 
-
-    const waitForICE = (pc) => new Promise(resolve => {
-        if (pc.iceGatheringState === 'complete') resolve();
-        else {
-            pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-            setTimeout(resolve, 2000);
-        }
-    });
-
-    const toggleMute = () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !track.enabled; });
-            setIsMuted((prev) => !prev);
-        }
-    };
+    silence_limit = 2
     
-    const playRawPCMChunk = (arrayBuffer) => {
-        if (!audioContextRef.current || !aiDestinationRef.current) return;
-        
-        try {
-            const byteLength = arrayBuffer.byteLength - (arrayBuffer.byteLength % 2);
-            const int16Array = new Int16Array(arrayBuffer, 0, byteLength / 2);
-            const float32Array = new Float32Array(int16Array.length);
+    min_phrase_bytes = 8000
+    max_phrase_bytes = 16000 * 8
+
+    pre_roll_chunks = 3
+    pre_roll = deque(maxlen=pre_roll_chunks)
+    pcm_buffer = bytearray()
+    silence_count = 0
+    is_speaking = False
+
+    audio_queue = asyncio.Queue()
+
+    async def pipeline_worker(wav_io):
+        try:
+            wav_io.seek(0)
+            transcription = await groq_client.audio.transcriptions.create(
+                file=("audio.wav", wav_io),
+                model="whisper-large-v3-turbo",
+                language="en",
+                prompt="This is a direct voice recording of a human talking to an AI. Do not transcribe background noise. Do not include 'Thanks for watching', 'Subscribe', or 'Thank you' unless explicitly spoken."
+            )
+            transcript = transcription.text.strip()
+
+            # SHORT/HALLUCINATION CHECK
+            if not transcript or len(transcript) < 2:
+                print("Empty/tiny transcript, skipping.", flush=True)
+                return
             
-            for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 32768.0; 
-            }
+            if transcript.lower() in GHOST_PHRASES:
+                print(f" Ignored Whisper Hallucination: '{transcript}'", flush=True)
+                return
 
-            const audioBuffer = audioContextRef.current.createBuffer(1, float32Array.length, 16000);
-            audioBuffer.getChannelData(0).set(float32Array);
+            print(f"Transcript: '{transcript}'", flush=True)
+            print("Sending to ElevenLabs TTS...", flush=True)
 
-            const source = audioContextRef.current.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(aiDestinationRef.current);
+            async for audio_chunk in elevenlabs_client.text_to_speech.convert(
+                voice_id=EPIC_VOICE_ID,
+                text=transcript,
+                model_id="eleven_multilingual_v2",
+                output_format="pcm_16000",
+                voice_settings=VoiceSettings(
+                    stability=0.4,
+                    similarity_boost=0.85,
+                    style=0.2,
+                    speed=1.0,
+                    use_speaker_boost=True
+                )
+            ):
+                if audio_chunk:
+                    louder_chunk = boost_output_volume(audio_chunk, multiplier=1.8)
+                    await audio_queue.put(louder_chunk)
 
-            const currentTime = audioContextRef.current.currentTime;
-            if (nextPlayTimeRef.current < currentTime) {
-                nextPlayTimeRef.current = currentTime;
-            }
-            source.start(nextPlayTimeRef.current);
-            nextPlayTimeRef.current += audioBuffer.duration;
-            
-        } catch (e) {
-            console.error("Error playing raw AI stream:", e);
-        }
-    };
+            print("Done sending audio back to React!", flush=True)
 
-    const toggleAIVoice = async () => {
-        if (isAIActive) {
-            setIsAIActive(false);
-            if (aiWsRef.current) aiWsRef.current.close();
-            if (workletNodeRef.current) workletNodeRef.current.disconnect();
-            if (micSourceRef.current) micSourceRef.current.disconnect();
-            if (audioContextRef.current) await audioContextRef.current.close();
-            
-            audioContextRef.current = null;
-            aiDestinationRef.current = null;
+        except Exception as e:
+            print(f"Pipeline Error: {e}", flush=True)
 
-            // FIX 4: Restore real mic track respecting current mute state.
-            const sender = publishPCRef.current.getSenders().find(s => s.track?.kind === 'audio');
-            if (sender && localStreamRef.current) {
-                const realTrack = localStreamRef.current.getAudioTracks()[0];
-                if (realTrack) {
-                    realTrack.enabled = !isMuted;
-                    sender.replaceTrack(realTrack);
-                }
-            }
-        } else {
-            setIsAIActive(true);
-            
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-            aiDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
-            nextPlayTimeRef.current = 0;
+    async def queue_sender():
+        while True:
+            audio_chunk = await audio_queue.get()
+            if audio_chunk is None:
+                break
+            try:
+                await websocket.send_bytes(audio_chunk)
+            except Exception:
+                break
 
-            const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
-            if (sender) { sender.replaceTrack(aiDestinationRef.current.stream.getAudioTracks()[0]); }
+    sender_task = asyncio.create_task(queue_sender())
 
-            const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_AI_URL}/ws/voice-changer`);
-            aiWsRef.current = ws;
-            ws.binaryType = "arraybuffer"; 
+    try:
+        while True:
+            chunk = await websocket.receive_bytes()
+            volume = get_volume(chunk)
 
-            ws.onopen = async () => {
-                try {
-                    await audioContextRef.current.audioWorklet.addModule(processorUrl);
-                    micSourceRef.current = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
-                    workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
-                    
-                    workletNodeRef.current.port.onmessage = (event) => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(event.data);
-                        }
-                    };
+            if volume > silence_threshold:
+                if not is_speaking:
+                    print("\nStarted speaking...", flush=True)
+                    for pre_chunk in pre_roll:
+                        pcm_buffer.extend(pre_chunk)
+                is_speaking = True
+                silence_count = 0
+                pcm_buffer.extend(chunk)
+            else:
+                pre_roll.append(chunk)
+                if is_speaking:
+                    silence_count += 1
+                    pcm_buffer.extend(chunk)
 
-                    micSourceRef.current.connect(workletNodeRef.current);
+            if is_speaking and (silence_count >= silence_limit or len(pcm_buffer) >= max_phrase_bytes):
+                reason = "Paused" if silence_count >= silence_limit else "Hit Max Length"
+                is_speaking = False
+                silence_count = 0
 
-                } catch (err) {
-                    console.error("Failed to load AudioWorklet:", err);
-                }
-            };
+                if len(pcm_buffer) >= min_phrase_bytes:
+                    print(f"Phrase complete ({reason}). Processing...", flush=True)
+                    normalized_audio = normalize_audio(bytes(pcm_buffer))
+                    wav_io = create_wav_buffer(normalized_audio)
+                    pcm_buffer.clear()
+                    asyncio.create_task(pipeline_worker(wav_io))
+                else:
+                    pcm_buffer.clear()
 
-            ws.onmessage = (event) => {
-                playRawPCMChunk(event.data);
-            };
-        }
-    };
+    except WebSocketDisconnect:
+        print("React disconnected.", flush=True)
+    except Exception as e:
+        print(f"Unexpected error: {e}", flush=True)
+    finally:
+        await audio_queue.put(None)
+        await sender_task
 
-    if (!isOpen) return null;
-
-    return (
-        <Paper 
-            elevation={10} 
-            sx={{ 
-                position: "fixed", 
-                bottom: { xs: 10, sm: 30 }, 
-                right: { xs: "2.5%", sm: 30 }, 
-                zIndex: 9999, 
-                width: { xs: "95%", sm: "460px" },
-                maxWidth: "460px",
-                bgcolor: "#1e293b", color: "white", borderRadius: 4, border: "1px solid #334155",
-                overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", 
-                py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
-            }}
-        >
-            <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
-            
-            <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
-                {receiverUser?.[0]?.toUpperCase()}
-            </Avatar>
-            <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
-            <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
-
-            {/* THE NEW ALERT DEBUGGER BUTTON */}
-            {audioBlocked && (
-                <Fab 
-                    variant="extended" 
-                    color="success" 
-                    onClick={() => {
-                        if (remoteAudioRef.current) {
-                            remoteAudioRef.current.volume = 1.0; 
-                            
-                            remoteAudioRef.current.play().then(() => {
-                                alert("SUCCESS: Audio stream is playing! Put the phone to your ear.");
-                            }).catch(err => {
-                                alert("ERROR: Phone still blocked it. Reason: " + err.message);
-                            });
-                        }
-                        setAudioBlocked(false);
-                    }}
-                    sx={{ mb: 3, px: 4, fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}
-                >
-                    <VolumeUpIcon sx={{ mr: 1 }} />
-                    Tap to Hear Call
-                </Fab>
-            )}
-            <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
-                <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
-                <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx2.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_2__"); }} sx={{ bgcolor: "#334155", color: "#38bdf8", "&:hover": { bgcolor: "#475569" } }}><NotificationsActiveIcon /></Fab>
-                <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx3.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_3__"); }} sx={{ bgcolor: "#334155", color: "#f97316", "&:hover": { bgcolor: "#475569" } }}><CampaignIcon /></Fab>
-                
-                <Fab size="medium" onClick={toggleAIVoice} sx={{ bgcolor: isAIActive ? "#a855f7" : "#334155", color: "white", "&:hover": { bgcolor: isAIActive ? "#9333ea" : "#475569" }, boxShadow: isAIActive ? "0 0 15px #a855f7" : "none" }} title="Toggle Epic Voice">
-                    <SmartToyIcon />
-                </Fab>
-
-                <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "white", "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
-                    {isMuted ? <MicOffIcon /> : <MicIcon />}
-                </Fab>
-
-                <Fab size="medium" color="error" onClick={onClose} sx={{ px: 3, width: "auto", borderRadius: 10 }}>
-                    <CallEndIcon sx={{ mr: 1 }} /> End
-                </Fab>
-            </Box>
-
-            <style>
-                {`
-                @keyframes pulse {
-                    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-                    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
-                    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-                }
-                `}
-            </style>
-        </Paper>
-    );
-}
-
-export default CallModal;
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002)
