@@ -44,6 +44,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
+                // THE HOLY TRINITY: Strips friend's voice and background noise before AI hears it
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: true,
@@ -99,7 +100,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 await subPC.setLocalDescription(subOffer);
                 await waitForICE(subPC);
                 if (!isMounted) return; 
-
                 
                 const subResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/subscribe?streamID=${receiverUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subPC.localDescription)
@@ -145,7 +145,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             setIsMuted((prev) => !prev);
         }
     };
-
     
     // RAW PCM PLAYER
     // Decodes the raw math from ElevenLabs for zero-delay playback
@@ -191,6 +190,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             audioContextRef.current = null;
             aiDestinationRef.current = null;
 
+            // RESTORE REAL VOICE: Swap the WebRTC track back to the real microphone
             const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
             if (sender && localStreamRef.current) {
                 sender.replaceTrack(localStreamRef.current.getAudioTracks()[0]);
@@ -203,16 +203,18 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             aiDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
             nextPlayTimeRef.current = 0;
 
+            // START BROADCAST: Swap WebRTC track to the AI's destination node immediately
+            const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
+            if (sender) { sender.replaceTrack(aiDestinationRef.current.stream.getAudioTracks()[0]); }
+
             const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_AI_URL}/ws/voice-changer`);
             aiWsRef.current = ws;
             ws.binaryType = "arraybuffer"; 
 
             ws.onopen = async () => {
-                const sender = publishPCRef.current.getSenders().find(s => s.track.kind === 'audio');
-                if (sender) { sender.replaceTrack(aiDestinationRef.current.stream.getAudioTracks()[0]); }
-
                 try {
                     await audioContextRef.current.audioWorklet.addModule(processorUrl);
+                    // Pass the hardware-filtered stream to the AI (ignoring the friend's voice)
                     micSourceRef.current = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
                     workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
                     
@@ -241,7 +243,12 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         <Paper 
             elevation={10} 
             sx={{ 
-                position: "fixed", bottom: 30, right: 30, zIndex: 9999, width: "460px",
+                position: "fixed", 
+                bottom: { xs: 10, sm: 30 }, 
+                right: { xs: "2.5%", sm: 30 }, 
+                zIndex: 9999, 
+                width: { xs: "95%", sm: "460px" },
+                maxWidth: "460px",
                 bgcolor: "#1e293b", color: "white", borderRadius: 4, border: "1px solid #334155",
                 overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
@@ -255,7 +262,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
 
-            <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", justifyContent: "center" }}>
+            <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx2.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_2__"); }} sx={{ bgcolor: "#334155", color: "#38bdf8", "&:hover": { bgcolor: "#475569" } }}><NotificationsActiveIcon /></Fab>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx3.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_3__"); }} sx={{ bgcolor: "#334155", color: "#f97316", "&:hover": { bgcolor: "#475569" } }}><CampaignIcon /></Fab>
@@ -264,7 +271,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     <SmartToyIcon />
                 </Fab>
 
-                {/* --- FIX APPLIED HERE --- */}
                 <Fab size="medium" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: isMuted ? "#fca5a5" : "white", "&:hover": { bgcolor: isMuted ? "#7f1d1d" : "#475569" } }}>
                     {isMuted ? <MicOffIcon /> : <MicIcon />}
                 </Fab>
@@ -276,5 +282,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         </Paper>
     );
 }
+
+export default CallModal;
 
 export default CallModal;
