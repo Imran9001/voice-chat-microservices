@@ -15,7 +15,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
-    const [audioBlocked, setAudioBlocked] = useState(false); // Set to false so it only shows when truly blocked
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
@@ -46,8 +45,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
-                // FIX 1: Prime the iOS audio session before getUserMedia.
-                // iOS can switch to "playback" mode when audio plays, killing mic capture.
                 try {
                     const primer = new Audio();
                     primer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
@@ -55,8 +52,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     primer.pause();
                 } catch (_) {}
 
-                // FIX 2: Use `ideal` constraints instead of strict booleans.
-                // Strict `true` can cause Android/iOS to grant a silenced/broken track.
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: { ideal: true },
@@ -67,7 +62,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
 
-                // FIX 3: Explicitly force tracks enabled — some mobile browsers init them as false.
                 stream.getAudioTracks().forEach(track => { track.enabled = true; });
 
                 localStreamRef.current = stream;
@@ -105,10 +99,10 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     if (remoteAudioRef.current) {
                         remoteAudioRef.current.srcObject = event.streams[0];
                         
-                        // Mobile UI Fix Trigger
+                        // Force Chrome Android to apply max volume instantly
+                        remoteAudioRef.current.volume = 1.0;
                         remoteAudioRef.current.play().catch(err => {
-                            console.warn("Mobile browser blocked autoplay. Surfacing UI button:", err);
-                            if (isMounted) setAudioBlocked(true);
+                            console.warn("Mobile browser blocked autoplay:", err);
                         });
 
                         if (isMounted) {
@@ -149,7 +143,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             setStatus("Connecting to server..."); 
             setIsMuted(false); 
             setIsAIActive(false);
-            setAudioBlocked(false);
         };
     }, [isOpen, currentUser, receiverUser, onClose]); 
 
@@ -165,6 +158,20 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         if (localStreamRef.current) {
             localStreamRef.current.getAudioTracks().forEach(track => { track.enabled = !track.enabled; });
             setIsMuted((prev) => !prev);
+        }
+    };
+    
+    // --- ANDROID OVERRIDE FUNCTION ---
+    // Forces Chrome to re-evaluate the audio element and push it to the speakers
+    const forceAndroidAudio = () => {
+        if (remoteAudioRef.current) {
+            remoteAudioRef.current.volume = 1.0;
+            remoteAudioRef.current.muted = false;
+            remoteAudioRef.current.play().then(() => {
+                alert("Audio stream forced to play! Check your physical volume buttons.");
+            }).catch(e => {
+                alert("Browser Error: " + e.message);
+            });
         }
     };
     
@@ -210,7 +217,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             audioContextRef.current = null;
             aiDestinationRef.current = null;
 
-            // FIX 4: Restore real mic track respecting current mute state.
             const sender = publishPCRef.current.getSenders().find(s => s.track?.kind === 'audio');
             if (sender && localStreamRef.current) {
                 const realTrack = localStreamRef.current.getAudioTracks()[0];
@@ -276,7 +282,8 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
-            <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+            {/* THE CSS FIX: Chrome Android will suspend 'display: none', so we make it 1px and transparent instead */}
+            <audio ref={remoteAudioRef} autoPlay playsInline style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} />
             
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
                 {receiverUser?.[0]?.toUpperCase()}
@@ -284,29 +291,17 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
 
-            {/* THE NEW ALERT DEBUGGER BUTTON */}
-            {audioBlocked && (
-                <Fab 
-                    variant="extended" 
-                    color="success" 
-                    onClick={() => {
-                        if (remoteAudioRef.current) {
-                            remoteAudioRef.current.volume = 1.0; 
-                            
-                            remoteAudioRef.current.play().then(() => {
-                                alert("SUCCESS: Audio stream is playing! Put the phone to your ear.");
-                            }).catch(err => {
-                                alert("ERROR: Phone still blocked it. Reason: " + err.message);
-                            });
-                        }
-                        setAudioBlocked(false);
-                    }}
-                    sx={{ mb: 3, px: 4, fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}
-                >
-                    <VolumeUpIcon sx={{ mr: 1 }} />
-                    Tap to Hear Call
-                </Fab>
-            )}
+            {/* MANUAL ANDROID OVERRIDE BUTTON */}
+            <Fab 
+                variant="extended" 
+                color="info" 
+                onClick={forceAndroidAudio}
+                sx={{ mb: 3, px: 4, fontWeight: 'bold' }}
+            >
+                <VolumeUpIcon sx={{ mr: 1 }} />
+                Force Audio Route
+            </Fab>
+
             <Box sx={{ display: "flex", gap: { xs: 1, sm: 1.5 }, flexWrap: "wrap", justifyContent: "center" }}>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx1.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_1__"); }} sx={{ bgcolor: "#334155", color: "#eab308", "&:hover": { bgcolor: "#475569" } }}><CelebrationIcon /></Fab>
                 <Fab size="medium" onClick={() => { sfxPlayerRef.current.src = '/sfx2.mp3'; sfxPlayerRef.current.play(); sendSignal("__SFX_2__"); }} sx={{ bgcolor: "#334155", color: "#38bdf8", "&:hover": { bgcolor: "#475569" } }}><NotificationsActiveIcon /></Fab>
@@ -324,16 +319,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     <CallEndIcon sx={{ mr: 1 }} /> End
                 </Fab>
             </Box>
-
-            <style>
-                {`
-                @keyframes pulse {
-                    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-                    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
-                    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-                }
-                `}
-            </style>
         </Paper>
     );
 }
