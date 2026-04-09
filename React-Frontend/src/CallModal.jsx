@@ -7,7 +7,7 @@ import CelebrationIcon from '@mui/icons-material/Celebration';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'; 
 import CampaignIcon from '@mui/icons-material/Campaign'; 
 import SmartToyIcon from '@mui/icons-material/SmartToy'; 
-import VolumeUpIcon from '@mui/icons-material/VolumeUp'; // Icon for the mobile unmute button
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 
 import processorUrl from './processor.js?url';
 
@@ -15,7 +15,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
-    const [audioBlocked, setAudioBlocked] = useState(true); // Tracks if the phone blocked autoplay
+    const [audioBlocked, setAudioBlocked] = useState(false); // Set to false so it only shows when truly blocked
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
@@ -92,8 +92,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     if (remoteAudioRef.current) {
                         remoteAudioRef.current.srcObject = event.streams[0];
                         
-                        // --- THE MOBILE UI FIX ---
-                        // Try to play. If the browser blocks it, show the "Tap to Hear Call" button
+                        // Mobile UI Fix Trigger
                         remoteAudioRef.current.play().catch(err => {
                             console.warn("Mobile browser blocked autoplay. Surfacing UI button:", err);
                             if (isMounted) setAudioBlocked(true);
@@ -259,7 +258,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: 3, boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
             }}
         >
-            {/* Hidden native audio player */}
             <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
             
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
@@ -268,15 +266,22 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
 
+            {/* THE NEW ALERT DEBUGGER BUTTON */}
             {audioBlocked && (
                 <Fab 
                     variant="extended" 
                     color="success" 
                     onClick={() => {
                         if (remoteAudioRef.current) {
-                            remoteAudioRef.current.play();
+                            remoteAudioRef.current.volume = 1.0; 
+                            
+                            remoteAudioRef.current.play().then(() => {
+                                alert("SUCCESS: Audio stream is playing! Put the phone to your ear.");
+                            }).catch(err => {
+                                alert("ERROR: Phone still blocked it. Reason: " + err.message);
+                            });
                         }
-                        setAudioBlocked(false); // Hide button after clicking
+                        setAudioBlocked(false);
                     }}
                     sx={{ mb: 3, px: 4, fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}
                 >
