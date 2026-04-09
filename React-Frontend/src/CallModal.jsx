@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Typography, Avatar, Fab, Paper } from "@mui/material";
+import { Box, Typography, Avatar, Fab, Paper, LinearProgress } from "@mui/material";
 import CallEndIcon from '@mui/icons-material/CallEnd';
 import MicIcon from '@mui/icons-material/Mic';
 import MicOffIcon from '@mui/icons-material/MicOff';
@@ -15,6 +15,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const [status, setStatus] = useState("Connecting to server...");
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
+    const [remoteVolume, setRemoteVolume] = useState(0); // VISUAL METER STATE
     
     const publishPCRef = useRef(null);
     const subscribePCRef = useRef(null);
@@ -30,9 +31,8 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     
     const workletNodeRef = useRef(null);
     const micSourceRef = useRef(null);
-
-    // FIX: Store bypass context in a ref, not window, so cleanup is reliable
     const androidBypassCtxRef = useRef(null);
+    const animationFrameRef = useRef(null); // Keeps track of our visual meter loop
 
     useEffect(() => {
         peerJoinedRef.current = peerHasJoined;
@@ -66,7 +66,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
 
                 stream.getAudioTracks().forEach(track => { track.enabled = true; });
-
                 localStreamRef.current = stream;
 
                 const pubPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -83,6 +82,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 await pubPC.setLocalDescription(pubOffer);
                 await waitForICE(pubPC);
                 if (!isMounted) return;
+
                 const pubResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pubPC.localDescription)
                 });
@@ -100,15 +100,44 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
                 subPC.ontrack = (event) => {
                     if (event.streams && event.streams[0]) {
-                        // Backup stream to global window to prevent Android garbage collection
                         window.persistentWebRTCStream = event.streams[0];
                         
+                        // STANDARD PLAYER
                         if (remoteAudioRef.current) {
                             remoteAudioRef.current.srcObject = event.streams[0];
                             remoteAudioRef.current.volume = 1.0;
                             remoteAudioRef.current.play().catch(err => console.warn(err));
                         }
                         
+                        // --- VISUAL VOLUME METER LOGIC ---
+                        try {
+                            const AudioContext = window.AudioContext || window.webkitAudioContext;
+                            const analyzeCtx = new AudioContext();
+                            const source = analyzeCtx.createMediaStreamSource(event.streams[0]);
+                            const analyser = analyzeCtx.createAnalyser();
+                            analyser.fftSize = 256;
+                            source.connect(analyser);
+
+                            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                            
+                            const updateMeter = () => {
+                                analyser.getByteFrequencyData(dataArray);
+                                let sum = 0;
+                                for(let i = 0; i < dataArray.length; i++) {
+                                    sum += dataArray[i];
+                                }
+                                const average = sum / dataArray.length;
+                                // Map 0-255 to 0-100 for the progress bar
+                                setRemoteVolume(Math.min(100, Math.round((average / 128) * 100)));
+                                
+                                animationFrameRef.current = requestAnimationFrame(updateMeter);
+                            };
+                            updateMeter();
+                        } catch (e) {
+                            console.error("Analyzer failed to start", e);
+                        }
+                        // ----------------------------------
+
                         if (isMounted) {
                             setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
                         }
@@ -138,17 +167,16 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             if (subscribePCRef.current) subscribePCRef.current.close();
             if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
             if (sfxPlayerRef.current) sfxPlayerRef.current.pause();
-
             if (workletNodeRef.current) workletNodeRef.current.disconnect();
             if (micSourceRef.current) micSourceRef.current.disconnect();
             if (aiWsRef.current) aiWsRef.current.close();
             if (audioContextRef.current) audioContextRef.current.close();
-
-            // FIX: Clean up bypass context and stream on call end
+            
             if (androidBypassCtxRef.current) {
                 androidBypassCtxRef.current.close();
                 androidBypassCtxRef.current = null;
             }
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
             window.persistentWebRTCStream = null;
 
             setStatus("Connecting to server..."); 
@@ -172,17 +200,12 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         }
     };
     
-    // --- THE NUCLEAR OPTION: DIRECT HARDWARE ROUTING ---
     const forceAndroidAudio = () => {
-        // 1. Wake up standard player just in case
         if (remoteAudioRef.current) {
             remoteAudioRef.current.volume = 1.0;
             remoteAudioRef.current.muted = false;
             remoteAudioRef.current.play().catch(e => console.warn(e));
         }
-
-        // 2. Bypass HTML5 player entirely and pipe directly to the physical speakers.
-        // FIX: Use ref instead of window.androidBypassCtx so cleanup works correctly.
         try {
             const stream = window.persistentWebRTCStream || (remoteAudioRef.current && remoteAudioRef.current.srcObject);
             if (stream) {
@@ -192,8 +215,6 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                     const source = androidBypassCtxRef.current.createMediaStreamSource(stream);
                     source.connect(androidBypassCtxRef.current.destination);
                 }
-                
-                // FIX: No alert() — it blocks the JS thread and can kill AudioContext.resume() on Android
                 androidBypassCtxRef.current.resume().catch(e => console.warn("Bypass resume failed:", e));
             } else {
                 console.warn("Force audio: stream not available yet.");
@@ -308,10 +329,27 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", fontSize: "2.5rem", mb: 2, boxShadow: "0 0 15px #3b82f6" }}>
                 {receiverUser?.[0]?.toUpperCase()}
             </Avatar>
-            <Typography variant="h6" fontWeight="bold">{receiverUser}</Typography>
+            <Typography variant="h6" fontWeight="bold" sx={{ mb: 1 }}>{receiverUser}</Typography>
+            
+            {/* VISUAL VOLUME METER */}
+            <Box sx={{ width: '60%', mb: 1 }}>
+                <Typography variant="caption" sx={{ color: "#94a3b8", display: 'block', textAlign: 'center', mb: 0.5 }}>
+                    Incoming Audio Signal
+                </Typography>
+                <LinearProgress 
+                    variant="determinate" 
+                    value={remoteVolume} 
+                    sx={{ 
+                        height: 8, 
+                        borderRadius: 4, 
+                        bgcolor: '#334155',
+                        '& .MuiLinearProgress-bar': { bgcolor: remoteVolume > 10 ? '#22c55e' : '#64748b' }
+                    }} 
+                />
+            </Box>
+            
             <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
 
-            {/* THE RED NUKE BUTTON */}
             <Fab 
                 variant="extended" 
                 color="error" 
