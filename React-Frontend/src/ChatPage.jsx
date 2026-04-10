@@ -48,7 +48,9 @@ function ChatPage({ user, token }) {
       return () => window.removeEventListener("beforeunload", handleTabClose);
   }, []);
 
+  // AUDIO REFS
   const ringtoneRef = useRef(new Audio('/ringtone.mp3')); 
+  const dialToneRef = useRef(new Audio('/dialtone.mp3')); // The new dial tone
   const sfxPlayerRef = useRef(new Audio()); 
 
   // FETCH USERS 
@@ -64,7 +66,7 @@ function ChatPage({ user, token }) {
       .catch((err) => console.error("Error fetching users:", err));
   }, [user]);
 
-  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING)
+  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING + SFX)
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
@@ -76,7 +78,7 @@ function ChatPage({ user, token }) {
       try {
         const data = JSON.parse(event.data); 
         
-        // Handle Sound Effects (SFX 1-10) and Call Commands
+        // Handle Sound Effects and Call Commands
         const isSFX = data.content.startsWith("__SFX_");
         const isCallCmd = [
             "__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"
@@ -85,7 +87,6 @@ function ChatPage({ user, token }) {
         if (isSFX || isCallCmd) {
             if (data.sender !== user) {
                 if (isSFX) {
-                    // Extract ID from e.g., "__SFX_10__"
                     const sfxId = data.content.split('_')[2]; 
                     sfxPlayerRef.current.src = `/sfx${sfxId}.mp3`;
                     sfxPlayerRef.current.play().catch(e => console.log("SFX Blocked:", e));
@@ -123,7 +124,7 @@ function ChatPage({ user, token }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Ringtone Management
+  // RINGTONE MANAGEMENT (Incoming Calls)
   useEffect(() => {
       ringtoneRef.current.loop = true;
       if (incomingCallFrom) {
@@ -132,7 +133,27 @@ function ChatPage({ user, token }) {
           ringtoneRef.current.pause();
           ringtoneRef.current.currentTime = 0; 
       }
+      return () => {
+          ringtoneRef.current.pause();
+          ringtoneRef.current.currentTime = 0;
+      };
   }, [incomingCallFrom]);
+
+  // DIAL TONE MANAGEMENT (Outgoing Calls)
+  useEffect(() => {
+      dialToneRef.current.loop = true;
+      // Play dial tone ONLY when we are calling someone AND they haven't picked up yet
+      if (activeCallReceiver && !peerAccepted) {
+          dialToneRef.current.play().catch(err => console.log("Dial tone blocked:", err));
+      } else {
+          dialToneRef.current.pause();
+          dialToneRef.current.currentTime = 0; 
+      }
+      return () => {
+          dialToneRef.current.pause();
+          dialToneRef.current.currentTime = 0;
+      };
+  }, [activeCallReceiver, peerAccepted]);
 
   const handleSend = () => {
     if (input.trim() !== "" && socketRef.current) {
@@ -184,21 +205,13 @@ function ChatPage({ user, token }) {
   return (
     <>
       <CssBaseline />
-      <Box sx={{ 
-          height: "100dvh", 
-          bgcolor: "#0f172a", 
-          display: "flex", 
-          justifyContent: "center", 
-          alignItems: "center" 
-      }}>
+      <Box sx={{ height: "100dvh", bgcolor: "#0f172a", display: "flex", justifyContent: "center", alignItems: "center" }}>
         <Paper elevation={10} sx={{ 
             width: { xs: "100%", md: "90%" }, 
             maxWidth: "1100px", 
             height: { xs: "100%", md: "85vh" }, 
-            display: "flex", 
-            overflow: "hidden", 
-            borderRadius: { xs: 0, md: 3 }, 
-            border: { xs: "none", md: "1px solid #334155" } 
+            display: "flex", overflow: "hidden", 
+            borderRadius: { xs: 0, md: 3 }, border: { xs: "none", md: "1px solid #334155" } 
         }}>
             
             {/* SIDEBAR - Responsive Toggle */}
@@ -206,30 +219,23 @@ function ChatPage({ user, token }) {
                 width: { xs: "100%", md: "30%" }, 
                 display: { xs: receiver ? "none" : "flex", md: "flex" },
                 borderRight: { xs: "none", md: "1px solid #334155" }, 
-                bgcolor: "#1e293b", 
-                flexDirection: "column" 
+                bgcolor: "#1e293b", flexDirection: "column" 
             }}>
                 <Box sx={{ p: 2, bgcolor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #334155" }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
                         <Typography variant="subtitle1" fontWeight="bold" color="white">{user}</Typography>
                     </Box>
-                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8" }}>
-                        <MicIcon />
-                    </IconButton>
+                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8" }}><MicIcon /></IconButton>
                 </Box>
-
                 <Box sx={{ p: 2 }}><Typography variant="h6" fontWeight="bold" sx={{ color: "#94a3b8" }}>Messages</Typography></Box>
-
                 <List sx={{ overflowY: "auto", flexGrow: 1 }}>
                     {userList.map((contactName) => (
                         <ListItemButton 
                             key={contactName} selected={receiver === contactName} onClick={() => setReceiver(contactName)}
                             sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" } }}
                         >
-                            <ListItemAvatar>
-                                <Avatar sx={{ bgcolor: receiver === contactName ? "#3b82f6" : "#64748b" }}>{contactName[0]?.toUpperCase()}</Avatar>
-                            </ListItemAvatar>
+                            <ListItemAvatar><Avatar sx={{ bgcolor: receiver === contactName ? "#3b82f6" : "#64748b" }}>{contactName[0]?.toUpperCase()}</Avatar></ListItemAvatar>
                             <ListItemText primary={contactName} />
                             <CircleIcon sx={{ fontSize: 10, color: "#22c55e" }} />
                         </ListItemButton>
@@ -238,25 +244,16 @@ function ChatPage({ user, token }) {
             </Box>
 
             {/* CHAT AREA - Responsive Toggle */}
-            <Box sx={{ 
-                width: { xs: "100%", md: "70%" }, 
-                display: { xs: receiver ? "flex" : "none", md: "flex" }, 
-                flexDirection: "column", 
-                bgcolor: "#0b1120" 
-            }}> 
+            <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: receiver ? "flex" : "none", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
                 {receiver ? (
                     <>
                         <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <IconButton onClick={() => setReceiver(null)} sx={{ display: { xs: "flex", md: "none" }, color: "white" }}>
-                                    <ArrowBackIcon />
-                                </IconButton>
+                                <IconButton onClick={() => setReceiver(null)} sx={{ display: { xs: "flex", md: "none" }, color: "white" }}><ArrowBackIcon /></IconButton>
                                 <Avatar sx={{ width: 40, height: 40, bgcolor: "#3b82f6" }}>{receiver[0]}</Avatar>
                                 <Typography variant="h6" color="white">{receiver}</Typography>
                             </Box>
-                            <IconButton onClick={handleStartCall} sx={{ color: "#22c55e", bgcolor: "#0f172a" }}>
-                                <PhoneIcon />
-                            </IconButton>
+                            <IconButton onClick={handleStartCall} sx={{ color: "#22c55e", bgcolor: "#0f172a" }}><PhoneIcon /></IconButton>
                         </Box>
 
                         {/* MESSAGES FEED + CUSTOM SCROLLBAR */}
@@ -285,9 +282,7 @@ function ChatPage({ user, token }) {
                             <Paper component="form" sx={{ p: "2px 4px", display: "flex", alignItems: "center", flexGrow: 1, borderRadius: 5, bgcolor: "#334155" }}>
                                 <InputBase sx={{ ml: 2, flex: 1, color: "white" }} placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") { e.preventDefault(); handleSend(); }}} />
                             </Paper>
-                            <IconButton sx={{ bgcolor: "#3b82f6", color: "white", "&:hover": { bgcolor: "#2563eb" } }} onClick={handleSend}>
-                                <SendIcon />
-                            </IconButton>
+                            <IconButton sx={{ bgcolor: "#3b82f6", color: "white", "&:hover": { bgcolor: "#2563eb" } }} onClick={handleSend}><SendIcon /></IconButton>
                         </Box>
                     </>
                 ) : (
