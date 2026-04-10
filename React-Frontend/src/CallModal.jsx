@@ -9,11 +9,22 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import SmartToyIcon from '@mui/icons-material/SmartToy'; 
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+
+// Additional Soundboard Icons
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import FlashOnIcon from '@mui/icons-material/FlashOn';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import GavelIcon from '@mui/icons-material/Gavel';
+import QuestionMarkIcon from '@mui/icons-material/QuestionMark';
 
 import processorUrl from './processor.js?url';
 
 function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, sendSignal }) {
-    const [status, setStatus] = useState("Connecting to server...");
+    const [status, setStatus] = useState("Connecting...");
+    const [seconds, setSeconds] = useState(0); 
     const [isMuted, setIsMuted] = useState(false); 
     const [isAIActive, setIsAIActive] = useState(false);
     const [remoteVolume, setRemoteVolume] = useState(0); 
@@ -34,6 +45,25 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const workletNodeRef = useRef(null);
     const micSourceRef = useRef(null);
     const animationFrameRef = useRef(null); 
+
+    // Helper: Format seconds to 00:00
+    const formatTime = (totalSeconds) => {
+        const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+        const secs = (totalSeconds % 60).toString().padStart(2, '0');
+        return `${mins}:${secs}`;
+    };
+
+    // Timer Logic
+    useEffect(() => {
+        let interval = null;
+        if (status === "Connected!") {
+            interval = setInterval(() => setSeconds(prev => prev + 1), 1000);
+        } else {
+            setSeconds(0);
+            clearInterval(interval);
+        }
+        return () => clearInterval(interval);
+    }, [status]);
 
     useEffect(() => {
         peerJoinedRef.current = peerHasJoined;
@@ -59,29 +89,23 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 });
                 
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
-                stream.getAudioTracks().forEach(track => { track.enabled = true; });
                 localStreamRef.current = stream;
 
-                // WEBRTC PUBLISH (To Go Server)
+                // WebRTC Publish
                 const pubPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
                 publishPCRef.current = pubPC;
                 stream.getTracks().forEach(track => pubPC.addTrack(track, stream));
                 
-                pubPC.oniceconnectionstatechange = () => {
-                    if ((pubPC.iceConnectionState === "disconnected" || pubPC.iceConnectionState === "failed") && isMounted) onClose(); 
-                };
-
                 const pubOffer = await pubPC.createOffer();
                 await pubPC.setLocalDescription(pubOffer);
                 await waitForICE(pubPC);
-                if (!isMounted) return;
-
-                const pubResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
+                
+                const pubRes = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/publish?streamID=${currentUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pubPC.localDescription)
                 });
-                await pubPC.setRemoteDescription(await pubResponse.json());
+                await pubPC.setRemoteDescription(await pubRes.json());
 
-                // WEBRTC SUBSCRIBE (From Go Server)
+                // WebRTC Subscribe
                 const subPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
                 subscribePCRef.current = subPC;
                 subPC.addTransceiver('audio', { direction: 'recvonly' });
@@ -91,45 +115,39 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                         window.persistentWebRTCStream = event.streams[0];
                         if (remoteAudioRef.current) {
                             remoteAudioRef.current.srcObject = event.streams[0];
-                            remoteAudioRef.current.volume = 1.0;
                             remoteAudioRef.current.play().catch(err => console.warn(err));
                         }
                         
-                        // Volume Analyzer Logic
-                        try {
-                            const AudioContext = window.AudioContext || window.webkitAudioContext;
-                            const analyzeCtx = new AudioContext();
-                            const source = analyzeCtx.createMediaStreamSource(event.streams[0]);
-                            const analyser = analyzeCtx.createAnalyser();
-                            analyser.fftSize = 256;
-                            source.connect(analyser);
-                            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                            const updateMeter = () => {
-                                analyser.getByteFrequencyData(dataArray);
-                                let sum = 0;
-                                for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-                                const average = sum / dataArray.length;
-                                setRemoteVolume(Math.min(100, Math.round((average / 128) * 100)));
-                                animationFrameRef.current = requestAnimationFrame(updateMeter);
-                            };
-                            updateMeter();
-                        } catch (e) { console.error(e); }
-
-                        if (isMounted) setStatus(peerJoinedRef.current ? "Connected!" : "Ringing..."); 
+                        // Volume Meter Logic
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        const analyzeCtx = new AudioContext();
+                        const source = analyzeCtx.createMediaStreamSource(event.streams[0]);
+                        const analyser = analyzeCtx.createAnalyser();
+                        analyser.fftSize = 256;
+                        source.connect(analyser);
+                        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                        const updateMeter = () => {
+                            analyser.getByteFrequencyData(dataArray);
+                            let sum = 0;
+                            for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                            setRemoteVolume(Math.min(100, Math.round(((sum / dataArray.length) / 128) * 100)));
+                            animationFrameRef.current = requestAnimationFrame(updateMeter);
+                        };
+                        updateMeter();
+                        if (isMounted) setStatus(peerJoinedRef.current ? "Connected!" : "Ringing...");
                     }
                 };
 
                 const subOffer = await subPC.createOffer();
                 await subPC.setLocalDescription(subOffer);
                 await waitForICE(subPC);
-                if (!isMounted) return; 
                 
-                const subResponse = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/subscribe?streamID=${receiverUser}_Mic`, {
+                const subRes = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/subscribe?streamID=${receiverUser}_Mic`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subPC.localDescription)
                 });
-                await subPC.setRemoteDescription(await subResponse.json());
+                await subPC.setRemoteDescription(await subRes.json());
 
-            } catch (error) { if (isMounted) setStatus("Call Failed"); }
+            } catch (e) { if (isMounted) setStatus("Failed"); }
         };
 
         startCall();
@@ -142,22 +160,21 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             if (aiWsRef.current) aiWsRef.current.close();
             if (audioContextRef.current) audioContextRef.current.close();
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-            window.persistentWebRTCStream = null;
         };
     }, [isOpen, currentUser, receiverUser, onClose]); 
 
-    const waitForICE = (pc) => new Promise(resolve => {
-        if (pc.iceGatheringState === 'complete') resolve();
+    const waitForICE = (pc) => new Promise(res => {
+        if (pc.iceGatheringState === 'complete') res();
         else {
-            pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-            setTimeout(resolve, 2000);
+            pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res();
+            setTimeout(res, 2000);
         }
     });
 
     const toggleMute = () => {
         if (localStreamRef.current) {
             const tracks = localStreamRef.current.getAudioTracks();
-            tracks.forEach(track => { track.enabled = !track.enabled; });
+            tracks.forEach(t => t.enabled = !t.enabled);
             setIsMuted(!tracks[0].enabled);
         }
     };
@@ -166,10 +183,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         if (isAIActive) {
             setIsAIActive(false);
             if (aiWsRef.current) aiWsRef.current.close();
-            if (workletNodeRef.current) workletNodeRef.current.disconnect();
-            if (micSourceRef.current) micSourceRef.current.disconnect();
             if (audioContextRef.current) await audioContextRef.current.close();
-            audioContextRef.current = null;
             const sender = publishPCRef.current.getSenders().find(s => s.track?.kind === 'audio');
             if (sender && localStreamRef.current) sender.replaceTrack(localStreamRef.current.getAudioTracks()[0]);
         } else {
@@ -188,26 +202,23 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 await audioContextRef.current.audioWorklet.addModule(processorUrl);
                 micSourceRef.current = audioContextRef.current.createMediaStreamSource(localStreamRef.current);
                 workletNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'pcm-processor');
-                workletNodeRef.current.port.onmessage = (e) => ws.readyState === WebSocket.OPEN && ws.send(e.data);
+                workletNodeRef.current.port.onmessage = (e) => ws.readyState === 1 && ws.send(e.data);
                 micSourceRef.current.connect(workletNodeRef.current);
             };
-            ws.onmessage = (e) => playRawPCMChunk(e.data);
+            ws.onmessage = (e) => {
+                const int16 = new Int16Array(e.data);
+                const f32 = new Float32Array(int16.length);
+                for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768.0;
+                const buffer = audioContextRef.current.createBuffer(1, f32.length, 16000);
+                buffer.getChannelData(0).set(f32);
+                const source = audioContextRef.current.createBufferSource();
+                source.buffer = buffer;
+                source.connect(aiDestinationRef.current);
+                const startTime = Math.max(audioContextRef.current.currentTime, nextPlayTimeRef.current);
+                source.start(startTime);
+                nextPlayTimeRef.current = startTime + buffer.duration;
+            };
         }
-    };
-
-    const playRawPCMChunk = (arrayBuffer) => {
-        if (!audioContextRef.current || !aiDestinationRef.current) return;
-        const int16Array = new Int16Array(arrayBuffer);
-        const float32Array = new Float32Array(int16Array.length);
-        for (let i = 0; i < int16Array.length; i++) float32Array[i] = int16Array[i] / 32768.0;
-        const buffer = audioContextRef.current.createBuffer(1, float32Array.length, 16000);
-        buffer.getChannelData(0).set(float32Array);
-        const source = audioContextRef.current.createBufferSource();
-        source.buffer = buffer;
-        source.connect(aiDestinationRef.current);
-        const startTime = Math.max(audioContextRef.current.currentTime, nextPlayTimeRef.current);
-        source.start(startTime);
-        nextPlayTimeRef.current = startTime + buffer.duration;
     };
 
     if (!isOpen) return null;
@@ -231,55 +242,58 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
         >
             <audio ref={remoteAudioRef} autoPlay playsInline style={{ position: 'absolute', opacity: 0 }} />
             
-            <IconButton 
-                onClick={() => setIsCollapsed(!isCollapsed)}
-                sx={{ position: 'absolute', top: 5, right: 5, color: '#94a3b8' }}
-            >
+            <IconButton onClick={() => setIsCollapsed(!isCollapsed)} sx={{ position: 'absolute', top: 5, right: 5, color: '#94a3b8' }}>
                 {isCollapsed ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
             </IconButton>
 
+            {/* HEADER */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: isCollapsed ? 0 : 2, flexDirection: isCollapsed ? 'row' : 'column' }}>
-                <Avatar sx={{ 
-                    width: isCollapsed ? 35 : 80, 
-                    height: isCollapsed ? 35 : 80, 
-                    bgcolor: "#3b82f6", 
-                    fontSize: isCollapsed ? "1rem" : "2.5rem", 
-                    boxShadow: "0 0 15px #3b82f6" 
-                }}>
+                <Avatar sx={{ width: isCollapsed ? 35 : 80, height: isCollapsed ? 35 : 80, bgcolor: "#3b82f6", boxShadow: "0 0 15px #3b82f6" }}>
                     {receiverUser?.[0]?.toUpperCase()}
                 </Avatar>
                 <Box>
-                    <Typography variant={isCollapsed ? "subtitle2" : "h6"} fontWeight="bold">
+                    <Typography variant={isCollapsed ? "subtitle2" : "h6"} fontWeight="bold" textAlign={isCollapsed ? "left" : "center"}>
                         {receiverUser}
                     </Typography>
-                    {isCollapsed && <Typography variant="caption" sx={{ color: "#22c55e", display: 'block' }}>{status}</Typography>}
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'flex-start' : 'center', gap: 0.5 }}>
+                        <AccessTimeIcon sx={{ fontSize: '0.8rem', color: status === "Connected!" ? "#22c55e" : "#94a3b8" }} />
+                        <Typography variant="caption" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", fontFamily: 'monospace' }}>
+                            {status === "Connected!" ? formatTime(seconds) : status}
+                        </Typography>
+                    </Box>
                 </Box>
             </Box>
             
-            <Box sx={{ width: isCollapsed ? '40%' : '60%', mb: isCollapsed ? 0 : 1 }}>
-                {!isCollapsed && <Typography variant="caption" sx={{ color: "#94a3b8", display: 'block', textAlign: 'center', mb: 0.5 }}>Signal</Typography>}
+            <Box sx={{ width: isCollapsed ? '30%' : '60%', mb: isCollapsed ? 0 : 1 }}>
                 <LinearProgress 
-                    variant="determinate" 
-                    value={remoteVolume} 
-                    sx={{ 
-                        height: isCollapsed ? 4 : 8, borderRadius: 4, bgcolor: '#334155',
-                        '& .MuiLinearProgress-bar': { bgcolor: remoteVolume > 10 ? '#22c55e' : '#64748b' }
-                    }} 
+                    variant="determinate" value={remoteVolume} 
+                    sx={{ height: isCollapsed ? 4 : 8, borderRadius: 4, bgcolor: '#334155', '& .MuiLinearProgress-bar': { bgcolor: remoteVolume > 10 ? '#22c55e' : '#64748b' } }} 
                 />
             </Box>
             
             {!isCollapsed && (
-                <>
-                    <Typography variant="body2" sx={{ color: status === "Connected!" ? "#22c55e" : "#94a3b8", mb: 3 }}>{status}</Typography>
-                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "center" }}>
-                        <Fab size="small" onClick={() => sendSignal("__SFX_1__")} sx={{ bgcolor: "#334155", color: "#eab308" }}><CelebrationIcon /></Fab>
-                        <Fab size="small" onClick={() => sendSignal("__SFX_2__")} sx={{ bgcolor: "#334155", color: "#38bdf8" }}><NotificationsActiveIcon /></Fab>
-                        <Fab size="small" onClick={() => sendSignal("__SFX_3__")} sx={{ bgcolor: "#334155", color: "#f97316" }}><CampaignIcon /></Fab>
+                <Box sx={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 1.2, px: 2, mt: 2 }}>
+                    {[
+                        { id: 1, icon: <CelebrationIcon />, color: "#eab308" },
+                        { id: 2, icon: <NotificationsActiveIcon />, color: "#38bdf8" },
+                        { id: 3, icon: <CampaignIcon />, color: "#f97316" },
+                        { id: 4, icon: <MusicNoteIcon />, color: "#a855f7" },
+                        { id: 5, icon: <VolumeUpIcon />, color: "#ef4444" },
+                        { id: 6, icon: <FlashOnIcon />, color: "#facc15" },
+                        { id: 7, icon: <FavoriteIcon />, color: "#ec4899" },
+                        { id: 8, icon: <BugReportIcon />, color: "#22c55e" },
+                        { id: 9, icon: <GavelIcon />, color: "#94a3b8" },
+                        { id: 10, icon: <QuestionMarkIcon />, color: "#6366f1" },
+                    ].map((sfx) => (
+                        <Fab key={sfx.id} size="small" onClick={() => { sfxPlayerRef.current.src = `/sfx${sfx.id}.mp3`; sfxPlayerRef.current.play(); sendSignal(`__SFX_${sfx.id}__`); }} sx={{ bgcolor: "#334155", color: sfx.color }}><Box sx={{ display: 'flex' }}>{sfx.icon}</Box></Fab>
+                    ))}
+                    
+                    <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center', gap: 2, mt: 1 }}>
                         <Fab size="small" onClick={toggleAIVoice} sx={{ bgcolor: isAIActive ? "#a855f7" : "#334155", color: "white" }}><SmartToyIcon /></Fab>
                         <Fab size="small" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: "white" }}>{isMuted ? <MicOffIcon /> : <MicIcon />}</Fab>
                         <Fab size="small" color="error" onClick={onClose} sx={{ px: 2, width: "auto", borderRadius: 10 }}><CallEndIcon sx={{ mr: 1 }} /> End</Fab>
                     </Box>
-                </>
+                </Box>
             )}
         </Paper>
     );
