@@ -2,13 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     CssBaseline, Typography, Paper, Box, Avatar, List, ListItemButton, 
     ListItemAvatar, ListItemText, IconButton, InputBase,
-    Dialog, DialogTitle, DialogContent, DialogActions, Button, LinearProgress
+    Dialog, DialogTitle, DialogContent, DialogActions, Button, LinearProgress,
+    useMediaQuery, useTheme
 } from "@mui/material";
 import SendIcon from '@mui/icons-material/Send'; 
 import CircleIcon from '@mui/icons-material/Circle';
 import MicIcon from '@mui/icons-material/Mic'; 
 import CloseIcon from '@mui/icons-material/Close'; 
 import PhoneIcon from '@mui/icons-material/Phone';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 import CallModal from './CallModal.jsx';
 
@@ -17,6 +19,9 @@ function ChatPage({ user, token }) {
   const [input, setInput] = useState("");
   const [userList, setUserList] = useState([]);
   const [receiver, setReceiver] = useState(null);
+
+  // FIX 1: Separate panel visibility from receiver so WebSocket stays alive
+  const [showSidebar, setShowSidebar] = useState(true);
   
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null); 
@@ -35,6 +40,10 @@ function ChatPage({ user, token }) {
 
   //  TAB CLOSE 
   const activeCallRef = useRef(null);
+
+  // FIX 3: Reactive media query instead of window.innerWidth snapshot
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   
   useEffect(() => {
       activeCallRef.current = activeCallReceiver;
@@ -63,10 +72,11 @@ function ChatPage({ user, token }) {
       .then((data) => {
         const others = data.filter(u => u !== user);
         setUserList(others);
-        if(others.length > 0) setReceiver(others[0]);
+        // FIX 3: Use reactive isDesktop instead of window.innerWidth snapshot
+        if (others.length > 0 && isDesktop) setReceiver(others[0]);
       })
       .catch((err) => console.error("Error fetching users:", err));
-  }, [user]);
+  }, [user, isDesktop]);
 
   // WEBSOCKET 
   useEffect(() => {
@@ -218,14 +228,40 @@ function ChatPage({ user, token }) {
       if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(track => track.stop()); localStreamRef.current = null; }
   };
 
+  // FIX 1: Select contact without nulling receiver — just toggle panel visibility
+  const handleSelectContact = (contactName) => {
+      setReceiver(contactName);
+      setShowSidebar(false);
+  };
+
   return (
     <>
       <CssBaseline />
-      <Box sx={{ height: "100vh", bgcolor: "#0f172a", display: "flex", justifyContent: "center", alignItems: "center" }}>
-        <Paper elevation={10} sx={{ width: "90%", maxWidth: "1100px", height: "85vh", display: "flex", overflow: "hidden", borderRadius: 3, border: "1px solid #334155" }}>
+      <Box sx={{ 
+          height: "100dvh",
+          bgcolor: "#0f172a", 
+          display: "flex", 
+          justifyContent: "center", 
+          alignItems: "center" 
+      }}>
+        <Paper elevation={10} sx={{ 
+            width: { xs: "100%", md: "90%" }, 
+            maxWidth: "1100px", 
+            height: { xs: "100%", md: "85vh" }, 
+            display: "flex", 
+            overflow: "hidden", 
+            borderRadius: { xs: 0, md: 3 }, 
+            border: { xs: "none", md: "1px solid #334155" } 
+        }}>
             
-            {/* LEFT SIDEBAR */}
-            <Box sx={{ width: "30%", borderRight: "1px solid #334155", bgcolor: "#1e293b", display: "flex", flexDirection: "column" }}>
+            {/* LEFT SIDEBAR — FIX 1: controlled by showSidebar, not receiver */}
+            <Box sx={{ 
+                width: { xs: "100%", md: "30%" }, 
+                display: { xs: showSidebar ? "flex" : "none", md: "flex" },
+                borderRight: { xs: "none", md: "1px solid #334155" }, 
+                bgcolor: "#1e293b", 
+                flexDirection: "column" 
+            }}>
                 <Box sx={{ p: 2, bgcolor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #334155" }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
@@ -241,7 +277,8 @@ function ChatPage({ user, token }) {
                 <List sx={{ overflowY: "auto", flexGrow: 1 }}>
                     {userList.map((contactName) => (
                         <ListItemButton 
-                            key={contactName} selected={receiver === contactName} onClick={() => setReceiver(contactName)}
+                            key={contactName} selected={receiver === contactName}
+                            onClick={() => handleSelectContact(contactName)}
                             sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" }, "&:hover": { bgcolor: "#334155" } }}
                         >
                             <ListItemAvatar>
@@ -254,13 +291,25 @@ function ChatPage({ user, token }) {
                 </List>
             </Box>
 
-            {/* RIGHT CHAT AREA */}
-            <Box sx={{ width: "70%", display: "flex", flexDirection: "column", bgcolor: "#0b1120" }}> 
+            {/* RIGHT CHAT AREA — FIX 1: controlled by showSidebar, not receiver */}
+            <Box sx={{ 
+                width: { xs: "100%", md: "70%" }, 
+                display: { xs: showSidebar ? "none" : "flex", md: "flex" }, 
+                flexDirection: "column", 
+                bgcolor: "#0b1120" 
+            }}> 
                 
                 {/* CHAT HEADER */}
                 {receiver ? (
                     <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 1, md: 2 } }}>
+                            {/* FIX 1: Back button shows sidebar without touching receiver */}
+                            <IconButton 
+                                onClick={() => setShowSidebar(true)} 
+                                sx={{ display: { xs: "flex", md: "none" }, color: "white", mr: 1 }}
+                            >
+                                <ArrowBackIcon />
+                            </IconButton>
                             <Avatar sx={{ width: 40, height: 40, bgcolor: "#3b82f6" }}>{receiver[0]}</Avatar>
                             <Typography variant="h6" color="white">{receiver}</Typography>
                         </Box>
@@ -270,13 +319,15 @@ function ChatPage({ user, token }) {
                         </IconButton>
                     </Box>
                 ) : (
-                    <Box sx={{ p: 2, bgcolor: "#1e293b" }}><Typography color="white">Select a chat</Typography></Box>
+                    <Box sx={{ p: 2, bgcolor: "#1e293b", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Typography color="#94a3b8">Select a chat to start messaging</Typography>
+                    </Box>
                 )}
 
                 {/* MESSAGES FEED */}
                 <Box sx={{ flexGrow: 1, p: 3, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1.5 }}>
                     {messages.map((msg) => (
-                        <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: "70%", minWidth: "100px" }}>
+                        <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: { xs: "85%", md: "70%" }, minWidth: "100px" }}>
                             <Paper sx={{ p: 1.5, px: 2, bgcolor: msg.isMe ? "#1d4ed8" : "#334155", color: "white", borderRadius: msg.isMe ? "15px 15px 0px 15px" : "15px 15px 15px 0px" }}>
                                 <Typography variant="body1">{msg.text}</Typography>
                                 <Typography variant="caption" sx={{ display: "block", textAlign: "right", mt: 0.5, color: "#cbd5e1", fontSize: "0.7rem" }}>
@@ -289,15 +340,16 @@ function ChatPage({ user, token }) {
                 </Box>
 
                 {/* INPUT BAR */}
-                <Box sx={{ p: 2, bgcolor: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
-                    <Paper component="form" sx={{ p: "2px 4px", display: "flex", alignItems: "center", flexGrow: 1, borderRadius: 5, bgcolor: "#334155" }}>
-                        <InputBase sx={{ ml: 2, flex: 1, color: "white" }} placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") { e.preventDefault(); handleSend(); }}} />
-                    </Paper>
-                    <IconButton color="primary" sx={{ bgcolor: "#3b82f6", color: "white", "&:hover":{bgcolor:"#2563eb"} }} onClick={handleSend}>
-                        <SendIcon />
-                    </IconButton>
-                </Box>
-
+                {receiver && (
+                    <Box sx={{ p: 2, bgcolor: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                        <Paper component="form" sx={{ p: "2px 4px", display: "flex", alignItems: "center", flexGrow: 1, borderRadius: 5, bgcolor: "#334155" }}>
+                            <InputBase sx={{ ml: 2, flex: 1, color: "white" }} placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") { e.preventDefault(); handleSend(); }}} />
+                        </Paper>
+                        <IconButton color="primary" sx={{ bgcolor: "#3b82f6", color: "white", "&:hover":{bgcolor:"#2563eb"} }} onClick={handleSend}>
+                            <SendIcon />
+                        </IconButton>
+                    </Box>
+                )}
             </Box>
         </Paper>
       </Box>
@@ -343,8 +395,8 @@ function ChatPage({ user, token }) {
         }}
       />
 
-      {/* MIC TEST MODAL */}
-      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: "400px", borderRadius: 3 }}}>
+      {/* MIC TEST MODAL — FIX 2: responsive minWidth */}
+      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: { xs: "90vw", sm: "400px" }, borderRadius: 3 }}}>
         <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             Microphone Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton>
         </DialogTitle>
