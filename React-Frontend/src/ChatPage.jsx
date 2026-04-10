@@ -9,7 +9,7 @@ import CircleIcon from '@mui/icons-material/Circle';
 import MicIcon from '@mui/icons-material/Mic'; 
 import CloseIcon from '@mui/icons-material/Close'; 
 import PhoneIcon from '@mui/icons-material/Phone';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'; // Added for mobile back button
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 import CallModal from './CallModal.jsx';
 
@@ -34,12 +34,9 @@ function ChatPage({ user, token }) {
   const [incomingCallFrom, setIncomingCallFrom] = useState(null);     
   const [peerAccepted, setPeerAccepted] = useState(false); 
 
-  //  TAB CLOSE 
+  // TAB CLOSE PERSISTENCE
   const activeCallRef = useRef(null);
-  
-  useEffect(() => {
-      activeCallRef.current = activeCallReceiver;
-  }, [activeCallReceiver]);
+  useEffect(() => { activeCallRef.current = activeCallReceiver; }, [activeCallReceiver]);
 
   useEffect(() => {
       const handleTabClose = () => {
@@ -47,14 +44,11 @@ function ChatPage({ user, token }) {
               socketRef.current.send("__CALL_ENDED__");
           }
       };
-
       window.addEventListener("beforeunload", handleTabClose);
       return () => window.removeEventListener("beforeunload", handleTabClose);
   }, []);
 
-  
   const ringtoneRef = useRef(new Audio('/ringtone.mp3')); 
-  //  Soundboard Player
   const sfxPlayerRef = useRef(new Audio()); 
 
   // FETCH USERS 
@@ -64,13 +58,13 @@ function ChatPage({ user, token }) {
       .then((data) => {
         const others = data.filter(u => u !== user);
         setUserList(others);
-        // On desktop, auto-select first user. On mobile, leave it null to show contact list first.
+        // Auto-select first user ONLY on desktop view (> 900px)
         if (others.length > 0 && window.innerWidth > 900) setReceiver(others[0]);
       })
       .catch((err) => console.error("Error fetching users:", err));
   }, [user]);
 
-  // WEBSOCKET 
+  // WEBSOCKET LOGIC
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
@@ -81,7 +75,6 @@ function ChatPage({ user, token }) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data); 
-
         const isSystemCommand = [
             "__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__",
             "__SFX_1__", "__SFX_2__", "__SFX_3__"
@@ -89,12 +82,8 @@ function ChatPage({ user, token }) {
 
         if (isSystemCommand) {
             if (data.sender !== user) {
-                if (data.content === "__CALL__") {
-                    setIncomingCallFrom(data.sender);
-                } 
-                else if (data.content === "__CALL_ACCEPTED__") {
-                    setPeerAccepted(true);
-                } 
+                if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
+                else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
                 else if (data.content === "__CALL_ENDED__") {
                     setIncomingCallFrom(null);   
                     setActiveCallReceiver(null); 
@@ -105,16 +94,9 @@ function ChatPage({ user, token }) {
                     setPeerAccepted(false);
                     alert(`${data.sender} declined the call.`); 
                 }
-                else if (data.content === "__SFX_1__") {
-                    sfxPlayerRef.current.src = '/sfx1.mp3';
-                    sfxPlayerRef.current.play().catch(e => console.log(e));
-                }
-                else if (data.content === "__SFX_2__") {
-                    sfxPlayerRef.current.src = '/sfx2.mp3';
-                    sfxPlayerRef.current.play().catch(e => console.log(e));
-                }
-                else if (data.content === "__SFX_3__") {
-                    sfxPlayerRef.current.src = '/sfx3.mp3';
+                else if (data.content.startsWith("__SFX_")) {
+                    const sfxNum = data.content.split('_')[3];
+                    sfxPlayerRef.current.src = `/sfx${sfxNum}.mp3`;
                     sfxPlayerRef.current.play().catch(e => console.log(e));
                 }
             }
@@ -127,9 +109,7 @@ function ChatPage({ user, token }) {
           isMe: data.sender !== receiver 
         };
         setMessages((prev) => [...prev, newMessage]);
-      } catch (error) { 
-          console.log("Non-JSON message:", event.data); 
-      }
+      } catch (error) { console.log("Message Error:", event.data); }
     };
 
     return () => { ws.close(); };
@@ -139,24 +119,17 @@ function ChatPage({ user, token }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  //  Ringtone trigger 
+  // Ringtone handling
   useEffect(() => {
       ringtoneRef.current.loop = true;
-
       if (incomingCallFrom) {
-          ringtoneRef.current.play().catch(err => console.log("Autoplay blocked by browser:", err));
+          ringtoneRef.current.play().catch(err => console.log("Autoplay blocked:", err));
       } else {
           ringtoneRef.current.pause();
           ringtoneRef.current.currentTime = 0; 
       }
-      
-      return () => {
-          ringtoneRef.current.pause();
-          ringtoneRef.current.currentTime = 0; 
-      };
   }, [incomingCallFrom]);
 
-  //  SEND TEXT
   const handleSend = () => {
     if (input.trim() !== "" && socketRef.current) {
       socketRef.current.send(input);
@@ -164,7 +137,6 @@ function ChatPage({ user, token }) {
     } 
   };
 
-  // INITIATE CALL
   const handleStartCall = () => {
       setPeerAccepted(false); 
       socketRef.current.send("__CALL__");
@@ -172,14 +144,12 @@ function ChatPage({ user, token }) {
   };
 
   const handleEndCall = useCallback(() => {
-      if (socketRef.current) {
-          socketRef.current.send("__CALL_ENDED__");
-      }
+      if (socketRef.current) socketRef.current.send("__CALL_ENDED__");
       setActiveCallReceiver(null);
       setPeerAccepted(false); 
   }, []); 
 
-  //  MIC TEST 
+  // MIC TEST LOGIC
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -188,27 +158,14 @@ function ChatPage({ user, token }) {
         const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
         peerConnectionRef.current = pc;
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-        pc.ontrack = (event) => {
-            if (audioRef.current) audioRef.current.srcObject = event.streams[0];
-        };
-
+        pc.ontrack = (event) => { if (audioRef.current) audioRef.current.srcObject = event.streams[0]; };
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await new Promise((resolve) => {
-            if (pc.iceGatheringState === 'complete') resolve();
-            else {
-                pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-                setTimeout(resolve, 2000); 
-            }
-        });
-
         const response = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/test-mic`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(pc.localDescription)
         });
-
         const answer = await response.json();
         await pc.setRemoteDescription(answer);
     } catch (error) { setIsTesting(false); }
@@ -224,7 +181,7 @@ function ChatPage({ user, token }) {
     <>
       <CssBaseline />
       <Box sx={{ 
-          height: "100dvh", // 100dvh fixes mobile keyboard squashing issues
+          height: "100dvh", 
           bgcolor: "#0f172a", 
           display: "flex", 
           justifyContent: "center", 
@@ -240,7 +197,7 @@ function ChatPage({ user, token }) {
             border: { xs: "none", md: "1px solid #334155" } 
         }}>
             
-            {/* LEFT SIDEBAR - Hides on mobile if a receiver is selected */}
+            {/* SIDEBAR (Responsive Width) */}
             <Box sx={{ 
                 width: { xs: "100%", md: "30%" }, 
                 display: { xs: receiver ? "none" : "flex", md: "flex" },
@@ -253,7 +210,7 @@ function ChatPage({ user, token }) {
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
                         <Typography variant="subtitle1" fontWeight="bold" color="white">{user}</Typography>
                     </Box>
-                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8", "&:hover": { color: "#3b82f6", bgcolor: "#1e293b" } }}>
+                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8", "&:hover": { color: "#3b82f6" } }}>
                         <MicIcon />
                     </IconButton>
                 </Box>
@@ -264,10 +221,10 @@ function ChatPage({ user, token }) {
                     {userList.map((contactName) => (
                         <ListItemButton 
                             key={contactName} selected={receiver === contactName} onClick={() => setReceiver(contactName)}
-                            sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" }, "&:hover": { bgcolor: "#334155" } }}
+                            sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" } }}
                         >
                             <ListItemAvatar>
-                                <Avatar sx={{ bgcolor: receiver === contactName ? "#3b82f6" : "#64748b", color: "white" }}>{contactName[0]?.toUpperCase()}</Avatar>
+                                <Avatar sx={{ bgcolor: receiver === contactName ? "#3b82f6" : "#64748b" }}>{contactName[0]?.toUpperCase()}</Avatar>
                             </ListItemAvatar>
                             <ListItemText primary={contactName} />
                             <CircleIcon sx={{ fontSize: 10, color: "#22c55e" }} />
@@ -276,124 +233,94 @@ function ChatPage({ user, token }) {
                 </List>
             </Box>
 
-            {/* RIGHT CHAT AREA - Hides on mobile if NO receiver is selected */}
+            {/* CHAT AREA (Responsive Width) */}
             <Box sx={{ 
                 width: { xs: "100%", md: "70%" }, 
                 display: { xs: receiver ? "flex" : "none", md: "flex" }, 
                 flexDirection: "column", 
                 bgcolor: "#0b1120" 
             }}> 
-                
-                {/* CHAT HEADER */}
                 {receiver ? (
-                    <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 1, md: 2 } }}>
-                            {/* MOBILE BACK BUTTON */}
-                            <IconButton 
-                                onClick={() => setReceiver(null)} 
-                                sx={{ display: { xs: "flex", md: "none" }, color: "white", mr: 1 }}
-                            >
-                                <ArrowBackIcon />
+                    <>
+                        <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                <IconButton onClick={() => setReceiver(null)} sx={{ display: { xs: "flex", md: "none" }, color: "white" }}>
+                                    <ArrowBackIcon />
+                                </IconButton>
+                                <Avatar sx={{ width: 40, height: 40, bgcolor: "#3b82f6" }}>{receiver[0]}</Avatar>
+                                <Typography variant="h6" color="white">{receiver}</Typography>
+                            </Box>
+                            <IconButton onClick={handleStartCall} sx={{ color: "#22c55e", bgcolor: "#0f172a" }}>
+                                <PhoneIcon />
                             </IconButton>
-                            <Avatar sx={{ width: 40, height: 40, bgcolor: "#3b82f6" }}>{receiver[0]}</Avatar>
-                            <Typography variant="h6" color="white">{receiver}</Typography>
                         </Box>
-                        
-                        <IconButton onClick={handleStartCall} sx={{ color: "#22c55e", bgcolor: "#0f172a", "&:hover": { bgcolor: "#1e293b" } }}>
-                            <PhoneIcon />
-                        </IconButton>
-                    </Box>
-                ) : (
-                    <Box sx={{ p: 2, bgcolor: "#1e293b", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Typography color="#94a3b8">Select a chat to start messaging</Typography>
-                    </Box>
-                )}
 
-                {/* MESSAGES FEED */}
-                <Box sx={{ flexGrow: 1, p: 3, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1.5 }}>
-                    {messages.map((msg) => (
-                        <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: { xs: "85%", md: "70%" }, minWidth: "100px" }}>
-                            <Paper sx={{ p: 1.5, px: 2, bgcolor: msg.isMe ? "#1d4ed8" : "#334155", color: "white", borderRadius: msg.isMe ? "15px 15px 0px 15px" : "15px 15px 15px 0px" }}>
-                                <Typography variant="body1">{msg.text}</Typography>
-                                <Typography variant="caption" sx={{ display: "block", textAlign: "right", mt: 0.5, color: "#cbd5e1", fontSize: "0.7rem" }}>
-                                    {new Date(msg.id).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </Typography>
+                        {/* MESSAGES FEED WITH CUSTOM SCROLLBAR */}
+                        <Box sx={{ 
+                            flexGrow: 1, p: 3, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1.5,
+                            '&::-webkit-scrollbar': { width: '8px' },
+                            '&::-webkit-scrollbar-track': { background: '#0b1120' },
+                            '&::-webkit-scrollbar-thumb': { background: '#334155', borderRadius: '10px' },
+                            '&::-webkit-scrollbar-thumb:hover': { background: '#3b82f6' }
+                        }}>
+                            {messages.map((msg) => (
+                                <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: "85%" }}>
+                                    <Paper sx={{ p: 1.5, px: 2, bgcolor: msg.isMe ? "#1d4ed8" : "#334155", color: "white", borderRadius: msg.isMe ? "15px 15px 0px 15px" : "15px 15px 15px 0px" }}>
+                                        <Typography variant="body1">{msg.text}</Typography>
+                                        <Typography variant="caption" sx={{ display: "block", textAlign: "right", mt: 0.5, color: "#cbd5e1" }}>
+                                            {new Date(msg.id).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </Typography>
+                                    </Paper>
+                                </Box>
+                            ))}
+                            <div ref={messagesEndRef} />
+                        </Box>
+
+                        {/* INPUT BAR */}
+                        <Box sx={{ p: 2, bgcolor: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                            <Paper component="form" sx={{ p: "2px 4px", display: "flex", alignItems: "center", flexGrow: 1, borderRadius: 5, bgcolor: "#334155" }}>
+                                <InputBase sx={{ ml: 2, flex: 1, color: "white" }} placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") { e.preventDefault(); handleSend(); }}} />
                             </Paper>
+                            <IconButton sx={{ bgcolor: "#3b82f6", color: "white", "&:hover": { bgcolor: "#2563eb" } }} onClick={handleSend}>
+                                <SendIcon />
+                            </IconButton>
                         </Box>
-                    ))}
-                    <div ref={messagesEndRef} />
-                </Box>
-
-                {/* INPUT BAR */}
-                {receiver && (
-                    <Box sx={{ p: 2, bgcolor: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
-                        <Paper component="form" sx={{ p: "2px 4px", display: "flex", alignItems: "center", flexGrow: 1, borderRadius: 5, bgcolor: "#334155" }}>
-                            <InputBase sx={{ ml: 2, flex: 1, color: "white" }} placeholder="Type a message..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") { e.preventDefault(); handleSend(); }}} />
-                        </Paper>
-                        <IconButton color="primary" sx={{ bgcolor: "#3b82f6", color: "white", "&:hover":{bgcolor:"#2563eb"} }} onClick={handleSend}>
-                            <SendIcon />
-                        </IconButton>
+                    </>
+                ) : (
+                    <Box sx={{ flexGrow: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Typography color="#94a3b8">Select a conversation</Typography>
                     </Box>
                 )}
             </Box>
         </Paper>
       </Box>
 
-      {/* INCOMING CALL DIALOG */}
-      <Dialog open={!!incomingCallFrom} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", borderRadius: 3, minWidth: "300px" }}}>
+      {/* CALL MODALS & DIALOGS */}
+      <Dialog open={!!incomingCallFrom} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", borderRadius: 3 }}}>
           <DialogTitle sx={{ textAlign: "center", pt: 3 }}>Incoming Call</DialogTitle>
           <DialogContent sx={{ textAlign: "center" }}>
               <Avatar sx={{ width: 80, height: 80, bgcolor: "#3b82f6", mx: "auto", mb: 2 }}>{incomingCallFrom?.[0]?.toUpperCase()}</Avatar>
               <Typography variant="h6">{incomingCallFrom} is calling...</Typography>
           </DialogContent>
           <DialogActions sx={{ justifyContent: "center", pb: 3, gap: 2 }}>
-              <Button variant="contained" color="error" onClick={() => {
-                  setIncomingCallFrom(null);
-                  if (socketRef.current) {
-                      socketRef.current.send("__CALL_DECLINED__");
-                  }
-              }}>Decline</Button>
-
-              <Button variant="contained" color="success" onClick={() => {
-                  setIncomingCallFrom(null); 
-                  setPeerAccepted(true); 
-                  setActiveCallReceiver(incomingCallFrom);
-                  
-                  if (socketRef.current) {
-                      socketRef.current.send("__CALL_ACCEPTED__");
-                  }
-              }}>Accept</Button>
+              <Button variant="contained" color="error" onClick={() => { setIncomingCallFrom(null); if (socketRef.current) socketRef.current.send("__CALL_DECLINED__"); }}>Decline</Button>
+              <Button variant="contained" color="success" onClick={() => { setIncomingCallFrom(null); setPeerAccepted(true); setActiveCallReceiver(incomingCallFrom); if (socketRef.current) socketRef.current.send("__CALL_ACCEPTED__"); }}>Accept</Button>
           </DialogActions>
       </Dialog>
 
-      {/* VOICE CALL MODAL */}
-      <CallModal 
-        isOpen={!!activeCallReceiver} 
-        onClose={handleEndCall} 
-        currentUser={user} 
-        receiverUser={activeCallReceiver} 
-        peerHasJoined={peerAccepted} 
-        sendSignal={(command) => {
-            if (socketRef.current) {
-                socketRef.current.send(command);
-            }
-        }}
-      />
+      <CallModal isOpen={!!activeCallReceiver} onClose={handleEndCall} currentUser={user} receiverUser={activeCallReceiver} peerHasJoined={peerAccepted} sendSignal={(cmd) => socketRef.current?.send(cmd)} />
 
-      {/* MIC TEST MODAL */}
-      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: "400px", borderRadius: 3 }}}>
-        <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            Microphone Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton>
-        </DialogTitle>
+      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: "350px", borderRadius: 3 }}}>
+        <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>Microphone Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton></DialogTitle>
         <DialogContent>
             <audio ref={audioRef} autoPlay />
-            <Box sx={{ width: "100%", height: "100px", bgcolor: "#0f172a", borderRadius: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {isTesting ? <Typography variant="body2" color="#22c55e">Listening...</Typography> : <Typography variant="body2" color="#64748b">Press Start to test</Typography>}
+            <Box sx={{ width: "100%", height: "80px", bgcolor: "#0f172a", borderRadius: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {isTesting ? <Typography variant="body2" color="#22c55e">Listening...</Typography> : <Typography variant="body2" color="#64748b">Press Start</Typography>}
             </Box>
             {isTesting && <LinearProgress color="success" sx={{ mt: 2 }} />}
         </DialogContent>
         <DialogActions sx={{ pb: 3, justifyContent: "center" }}>
-            {!isTesting ? <Button variant="contained" onClick={startMicTest}>Start Test</Button> : <Button variant="contained" color="error" onClick={stopMicTest}>Stop Test</Button>}
+            {!isTesting ? <Button variant="contained" onClick={startMicTest}>Start</Button> : <Button variant="contained" color="error" onClick={stopMicTest}>Stop</Button>}
         </DialogActions>
       </Dialog>
     </>
