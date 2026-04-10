@@ -58,13 +58,13 @@ function ChatPage({ user, token }) {
       .then((data) => {
         const others = data.filter(u => u !== user);
         setUserList(others);
-        // Auto-select first user ONLY on desktop view (> 900px)
+        // On desktop (>900px), auto-select first user. On mobile, stay on list view.
         if (others.length > 0 && window.innerWidth > 900) setReceiver(others[0]);
       })
       .catch((err) => console.error("Error fetching users:", err));
   }, [user]);
 
-  // WEBSOCKET LOGIC
+  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING)
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
@@ -75,14 +75,22 @@ function ChatPage({ user, token }) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data); 
-        const isSystemCommand = [
-            "__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__",
-            "__SFX_1__", "__SFX_2__", "__SFX_3__"
+        
+        // Handle Sound Effects (SFX 1-10) and Call Commands
+        const isSFX = data.content.startsWith("__SFX_");
+        const isCallCmd = [
+            "__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"
         ].includes(data.content);
 
-        if (isSystemCommand) {
+        if (isSFX || isCallCmd) {
             if (data.sender !== user) {
-                if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
+                if (isSFX) {
+                    // Extract ID from e.g., "__SFX_10__"
+                    const sfxId = data.content.split('_')[2]; 
+                    sfxPlayerRef.current.src = `/sfx${sfxId}.mp3`;
+                    sfxPlayerRef.current.play().catch(e => console.log("SFX Blocked:", e));
+                } 
+                else if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
                 else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
                 else if (data.content === "__CALL_ENDED__") {
                     setIncomingCallFrom(null);   
@@ -94,22 +102,18 @@ function ChatPage({ user, token }) {
                     setPeerAccepted(false);
                     alert(`${data.sender} declined the call.`); 
                 }
-                else if (data.content.startsWith("__SFX_")) {
-                    const sfxNum = data.content.split('_')[3];
-                    sfxPlayerRef.current.src = `/sfx${sfxNum}.mp3`;
-                    sfxPlayerRef.current.play().catch(e => console.log(e));
-                }
             }
             return; 
         }
 
+        // Handle standard text messages
         const newMessage = {
           id: Date.now(),
           text: data.content,
           isMe: data.sender !== receiver 
         };
         setMessages((prev) => [...prev, newMessage]);
-      } catch (error) { console.log("Message Error:", event.data); }
+      } catch (error) { console.log("Incoming Data:", event.data); }
     };
 
     return () => { ws.close(); };
@@ -119,7 +123,7 @@ function ChatPage({ user, token }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Ringtone handling
+  // Ringtone Management
   useEffect(() => {
       ringtoneRef.current.loop = true;
       if (incomingCallFrom) {
@@ -149,7 +153,7 @@ function ChatPage({ user, token }) {
       setPeerAccepted(false); 
   }, []); 
 
-  // MIC TEST LOGIC
+  // MIC TEST LOGIC (Direct to Go WebRTC)
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -197,7 +201,7 @@ function ChatPage({ user, token }) {
             border: { xs: "none", md: "1px solid #334155" } 
         }}>
             
-            {/* SIDEBAR (Responsive Width) */}
+            {/* SIDEBAR - Responsive Toggle */}
             <Box sx={{ 
                 width: { xs: "100%", md: "30%" }, 
                 display: { xs: receiver ? "none" : "flex", md: "flex" },
@@ -210,7 +214,7 @@ function ChatPage({ user, token }) {
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
                         <Typography variant="subtitle1" fontWeight="bold" color="white">{user}</Typography>
                     </Box>
-                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8", "&:hover": { color: "#3b82f6" } }}>
+                    <IconButton onClick={() => setIsMicOpen(true)} sx={{ color: "#94a3b8" }}>
                         <MicIcon />
                     </IconButton>
                 </Box>
@@ -233,7 +237,7 @@ function ChatPage({ user, token }) {
                 </List>
             </Box>
 
-            {/* CHAT AREA (Responsive Width) */}
+            {/* CHAT AREA - Responsive Toggle */}
             <Box sx={{ 
                 width: { xs: "100%", md: "70%" }, 
                 display: { xs: receiver ? "flex" : "none", md: "flex" }, 
@@ -255,7 +259,7 @@ function ChatPage({ user, token }) {
                             </IconButton>
                         </Box>
 
-                        {/* MESSAGES FEED WITH CUSTOM SCROLLBAR */}
+                        {/* MESSAGES FEED + CUSTOM SCROLLBAR */}
                         <Box sx={{ 
                             flexGrow: 1, p: 3, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1.5,
                             '&::-webkit-scrollbar': { width: '8px' },
@@ -288,14 +292,14 @@ function ChatPage({ user, token }) {
                     </>
                 ) : (
                     <Box sx={{ flexGrow: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Typography color="#94a3b8">Select a conversation</Typography>
+                        <Typography color="#94a3b8">Select a contact to begin</Typography>
                     </Box>
                 )}
             </Box>
         </Paper>
       </Box>
 
-      {/* CALL MODALS & DIALOGS */}
+      {/* CALL MODALS */}
       <Dialog open={!!incomingCallFrom} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", borderRadius: 3 }}}>
           <DialogTitle sx={{ textAlign: "center", pt: 3 }}>Incoming Call</DialogTitle>
           <DialogContent sx={{ textAlign: "center" }}>
@@ -310,17 +314,18 @@ function ChatPage({ user, token }) {
 
       <CallModal isOpen={!!activeCallReceiver} onClose={handleEndCall} currentUser={user} receiverUser={activeCallReceiver} peerHasJoined={peerAccepted} sendSignal={(cmd) => socketRef.current?.send(cmd)} />
 
+      {/* MIC TEST DIALOG */}
       <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: "350px", borderRadius: 3 }}}>
-        <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>Microphone Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton></DialogTitle>
+        <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>Mic Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton></DialogTitle>
         <DialogContent>
             <audio ref={audioRef} autoPlay />
             <Box sx={{ width: "100%", height: "80px", bgcolor: "#0f172a", borderRadius: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {isTesting ? <Typography variant="body2" color="#22c55e">Listening...</Typography> : <Typography variant="body2" color="#64748b">Press Start</Typography>}
+                {isTesting ? <Typography variant="body2" color="#22c55e">Mic is Active</Typography> : <Typography variant="body2" color="#64748b">Check your levels</Typography>}
             </Box>
             {isTesting && <LinearProgress color="success" sx={{ mt: 2 }} />}
         </DialogContent>
         <DialogActions sx={{ pb: 3, justifyContent: "center" }}>
-            {!isTesting ? <Button variant="contained" onClick={startMicTest}>Start</Button> : <Button variant="contained" color="error" onClick={stopMicTest}>Stop</Button>}
+            {!isTesting ? <Button variant="contained" onClick={startMicTest}>Start Test</Button> : <Button variant="contained" color="error" onClick={stopMicTest}>Stop Test</Button>}
         </DialogActions>
       </Dialog>
     </>
