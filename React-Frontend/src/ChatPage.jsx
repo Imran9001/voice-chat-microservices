@@ -78,21 +78,52 @@ function ChatPage({ user, token }) {
       try {
         const data = JSON.parse(event.data); 
         
-        // Handle Sound Effects and Call Commands
         const isSFX = data.content.startsWith("__SFX_");
-        const isCallCmd = [
-            "__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"
-        ].includes(data.content);
+        const isCallCmd = ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content);
 
         if (isSFX || isCallCmd) {
             if (data.sender !== user) {
-                if (isSFX) {
-                    const sfxId = data.content.split('_')[2]; 
-                    sfxPlayerRef.current.src = `/sfx${sfxId}.mp3`;
-                    sfxPlayerRef.current.play().catch(e => console.log("SFX Blocked:", e));
+                // --- MANUAL SOUNDBOARD START ---
+                if (data.content === "__SFX_1__") {
+                    sfxPlayerRef.current.src = '/sfx1.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_2__") {
+                    sfxPlayerRef.current.src = '/sfx2.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_3__") {
+                    sfxPlayerRef.current.src = '/sfx3.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_4__") {
+                    sfxPlayerRef.current.src = '/sfx4.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_5__") {
+                    sfxPlayerRef.current.src = '/sfx5.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_6__") {
+                    sfxPlayerRef.current.src = '/sfx6.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_7__") {
+                    sfxPlayerRef.current.src = '/sfx7.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_8__") {
+                    sfxPlayerRef.current.src = '/sfx8.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_9__") {
+                    sfxPlayerRef.current.src = '/sfx9.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                } else if (data.content === "__SFX_10__") {
+                    sfxPlayerRef.current.src = '/sfx10.mp3';
+                    sfxPlayerRef.current.play().catch(e => console.log(e));
+                }
+                // --- MANUAL SOUNDBOARD END ---
+                
+                // CALL COMMANDS
+                else if (data.content === "__CALL__") {
+                    setIncomingCallFrom(data.sender);
                 } 
-                else if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
-                else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
+                else if (data.content === "__CALL_ACCEPTED__") {
+                    setPeerAccepted(true);
+                } 
                 else if (data.content === "__CALL_ENDED__") {
                     setIncomingCallFrom(null);   
                     setActiveCallReceiver(null); 
