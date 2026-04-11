@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     CssBaseline, Typography, Paper, Box, Avatar, List, ListItemButton, 
     ListItemAvatar, ListItemText, IconButton, InputBase,
-    Dialog, DialogTitle, DialogContent, DialogActions, Button, LinearProgress
+    Dialog, DialogTitle, DialogContent, DialogActions, Button, LinearProgress,
+    useMediaQuery, useTheme
 } from "@mui/material";
 import SendIcon from '@mui/icons-material/Send'; 
 import CircleIcon from '@mui/icons-material/Circle';
@@ -18,6 +19,9 @@ function ChatPage({ user, token }) {
   const [input, setInput] = useState("");
   const [userList, setUserList] = useState([]);
   const [receiver, setReceiver] = useState(null);
+  
+  // Controls mobile panel visibility so WebSocket stays alive
+  const [showSidebar, setShowSidebar] = useState(true);
   
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null); 
@@ -53,6 +57,9 @@ function ChatPage({ user, token }) {
       return () => window.removeEventListener("beforeunload", handleTabClose);
   }, []);
 
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
+
   // FETCH USERS 
   useEffect(() => {
     fetch(`${import.meta.env.VITE_JAVA_URL}/users`)
@@ -60,18 +67,18 @@ function ChatPage({ user, token }) {
       .then((data) => {
         const others = data.filter(u => u !== user);
         setUserList(others);
-        if (others.length > 0 && window.innerWidth > 900) setReceiver(others[0]);
+        if (others.length > 0 && isDesktop) setReceiver(others[0]);
       })
       .catch((err) => console.error("Error fetching users:", err));
-  }, [user]);
+  }, [user, isDesktop]);
 
   // WEBSOCKET LOGIC (MESSAGES + SIGNALLING + SOUNDBOARD)
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
     
-    // FIXED: Removed redundant /ws to prevent api/ws/ws error
-    const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}?token=${token}&receiver=${receiver}`);
+    // RESTORED: The /ws is back so it perfectly matches Python's @app.websocket("/api/ws/ws")
+    const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}/ws?token=${token}&receiver=${receiver}`);
     
     ws.onopen = () => { socketRef.current = ws; };
 
@@ -123,7 +130,6 @@ function ChatPage({ user, token }) {
                 alert(`${data.sender} declined the call.`); 
             }
 
-            // If it was a system command, don't show it as a text message
             const isSystem = data.content.startsWith("__SFX_") || 
                            ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content);
             if (isSystem) return;
@@ -168,7 +174,13 @@ function ChatPage({ user, token }) {
       setPeerAccepted(false); 
   }, []); 
 
-  // MIC TEST LOGIC (Corrected ICE Gathering)
+  // Select contact and switch panel without nulling receiver (Mobile Fix)
+  const handleSelectContact = (contactName) => {
+      setReceiver(contactName);
+      setShowSidebar(false);
+  };
+
+  // MIC TEST LOGIC
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -215,7 +227,7 @@ function ChatPage({ user, token }) {
             {/* SIDEBAR */}
             <Box sx={{ 
                 width: { xs: "100%", md: "30%" }, 
-                display: { xs: receiver ? "none" : "flex", md: "flex" },
+                display: { xs: showSidebar ? "flex" : "none", md: "flex" },
                 borderRight: { xs: "none", md: "1px solid #334155" }, 
                 bgcolor: "#1e293b", flexDirection: "column" 
             }}>
@@ -228,7 +240,9 @@ function ChatPage({ user, token }) {
                 </Box>
                 <List sx={{ overflowY: "auto", flexGrow: 1 }}>
                     {userList.map((contact) => (
-                        <ListItemButton key={contact} selected={receiver === contact} onClick={() => setReceiver(contact)} sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" } }}>
+                        <ListItemButton key={contact} selected={receiver === contact}
+                            onClick={() => handleSelectContact(contact)}
+                            sx={{ borderRadius: 2, mx: 1, mb: 0.5, color: "white", "&.Mui-selected": { bgcolor: "#334155" } }}>
                             <ListItemAvatar><Avatar sx={{ bgcolor: receiver === contact ? "#3b82f6" : "#64748b" }}>{contact[0]}</Avatar></ListItemAvatar>
                             <ListItemText primary={contact} />
                             <CircleIcon sx={{ fontSize: 10, color: "#22c55e" }} />
@@ -238,16 +252,12 @@ function ChatPage({ user, token }) {
             </Box>
 
             {/* CHAT AREA */}
-            <Box sx={{ 
-                width: { xs: "100%", md: "70%" }, 
-                display: { xs: receiver ? "flex" : "none", md: "flex" }, 
-                flexDirection: "column", bgcolor: "#0b1120" 
-            }}> 
+            <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: showSidebar ? "none" : "flex", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
                 {receiver ? (
                     <>
                         <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <IconButton onClick={() => setReceiver(null)} sx={{ display: { xs: "flex", md: "none" }, color: "white" }}><ArrowBackIcon /></IconButton>
+                                <IconButton onClick={() => setShowSidebar(true)} sx={{ display: { xs: "flex", md: "none" }, color: "white" }}><ArrowBackIcon /></IconButton>
                                 <Avatar sx={{ width: 40, height: 40, bgcolor: "#3b82f6" }}>{receiver[0]}</Avatar>
                                 <Typography variant="h6" color="white">{receiver}</Typography>
                             </Box>
@@ -301,11 +311,11 @@ function ChatPage({ user, token }) {
 
       <CallModal isOpen={!!activeCallReceiver} onClose={handleEndCall} currentUser={user} receiverUser={activeCallReceiver} peerHasJoined={peerAccepted} sendSignal={(cmd) => socketRef.current?.send(cmd)} />
 
-      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", borderRadius: 3 }}}>
+      <Dialog open={isMicOpen} onClose={() => { stopMicTest(); setIsMicOpen(false); }} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", minWidth: { xs: "90vw", sm: "400px" }, borderRadius: 3 }}}>
         <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>Mic Test <IconButton onClick={() => { stopMicTest(); setIsMicOpen(false); }} sx={{ color: "#94a3b8" }}><CloseIcon /></IconButton></DialogTitle>
         <DialogContent>
             <audio ref={audioRef} autoPlay />
-            <Box sx={{ width: "300px", height: "80px", bgcolor: "#0f172a", borderRadius: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Box sx={{ width: "100%", height: "80px", bgcolor: "#0f172a", borderRadius: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {isTesting ? <Typography color="#22c55e">Mic Active</Typography> : <Typography color="#64748b">Ready</Typography>}
             </Box>
             {isTesting && <LinearProgress color="success" sx={{ mt: 2 }} />}
