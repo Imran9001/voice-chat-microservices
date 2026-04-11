@@ -65,12 +65,12 @@ function ChatPage({ user, token }) {
       .catch((err) => console.error("Error fetching users:", err));
   }, [user]);
 
-  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING + SOUNDBOARD)
+  // WEBSOCKET LOGIC
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
     
-    // FIXED: Removed redundant /ws to prevent api/ws/ws error
+    // Path fix to prevent redundant /ws/ws
     const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}?token=${token}&receiver=${receiver}`);
     
     ws.onopen = () => { socketRef.current = ws; };
@@ -123,7 +123,6 @@ function ChatPage({ user, token }) {
                 alert(`${data.sender} declined the call.`); 
             }
 
-            // If it was a system command, don't show it as a text message
             const isSystem = data.content.startsWith("__SFX_") || 
                            ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content);
             if (isSystem) return;
@@ -168,7 +167,7 @@ function ChatPage({ user, token }) {
       setPeerAccepted(false); 
   }, []); 
 
-  // MIC TEST LOGIC (Corrected ICE Gathering)
+  // MIC TEST LOGIC
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -213,12 +212,7 @@ function ChatPage({ user, token }) {
             display: "flex", overflow: "hidden", borderRadius: { xs: 0, md: 3 }, border: { xs: "none", md: "1px solid #334155" } 
         }}>
             {/* SIDEBAR */}
-            <Box sx={{ 
-                width: { xs: "100%", md: "30%" }, 
-                display: { xs: receiver ? "none" : "flex", md: "flex" },
-                borderRight: { xs: "none", md: "1px solid #334155" }, 
-                bgcolor: "#1e293b", flexDirection: "column" 
-            }}>
+            <Box sx={{ width: { xs: "100%", md: "30%" }, display: { xs: receiver ? "none" : "flex", md: "flex" }, borderRight: "1px solid #334155", bgcolor: "#1e293b", flexDirection: "column" }}>
                 <Box sx={{ p: 2, bgcolor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #334155" }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
@@ -238,11 +232,7 @@ function ChatPage({ user, token }) {
             </Box>
 
             {/* CHAT AREA */}
-            <Box sx={{ 
-                width: { xs: "100%", md: "70%" }, 
-                display: { xs: receiver ? "flex" : "none", md: "flex" }, 
-                flexDirection: "column", bgcolor: "#0b1120" 
-            }}> 
+            <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: receiver ? "flex" : "none", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
                 {receiver ? (
                     <>
                         <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -265,6 +255,11 @@ function ChatPage({ user, token }) {
                                 <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: "85%" }}>
                                     <Paper sx={{ p: 1.5, px: 2, bgcolor: msg.isMe ? "#1d4ed8" : "#334155", color: "white", borderRadius: msg.isMe ? "15px 15px 0px 15px" : "15px 15px 15px 0px" }}>
                                         <Typography variant="body1">{msg.text}</Typography>
+                                        
+                                        {/* RESTORED TIMESTAMP */}
+                                        <Typography variant="caption" sx={{ display: "block", textAlign: "right", mt: 0.5, color: "#cbd5e1", fontSize: '0.7rem' }}>
+                                            {new Date(msg.id).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </Typography>
                                     </Paper>
                                 </Box>
                             ))}
