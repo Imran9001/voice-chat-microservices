@@ -20,7 +20,7 @@ function ChatPage({ user, token }) {
   const [userList, setUserList] = useState([]);
   const [receiver, setReceiver] = useState(null);
   
-  // Controls mobile panel visibility so WebSocket stays alive
+  // Mobile UI state
   const [showSidebar, setShowSidebar] = useState(true);
   
   const socketRef = useRef(null);
@@ -33,17 +33,17 @@ function ChatPage({ user, token }) {
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isTesting, setIsTesting] = useState(false); 
 
-  // VOICE CALL STATES 
+  // Voice Call States
   const [activeCallReceiver, setActiveCallReceiver] = useState(null); 
   const [incomingCallFrom, setIncomingCallFrom] = useState(null);     
   const [peerAccepted, setPeerAccepted] = useState(false); 
 
-  // AUDIO REFS
+  // Audio Assets
   const ringtoneRef = useRef(new Audio('/ringtone.mp3')); 
   const dialToneRef = useRef(new Audio('/dialtone.mp3')); 
   const sfxPlayerRef = useRef(new Audio()); 
 
-  // TAB CLOSE PERSISTENCE
+  // Tab Close Safety
   const activeCallRef = useRef(null);
   useEffect(() => { activeCallRef.current = activeCallReceiver; }, [activeCallReceiver]);
 
@@ -60,7 +60,7 @@ function ChatPage({ user, token }) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
 
-  // FETCH USERS 
+  // Fetch users from Java Auth
   useEffect(() => {
     fetch(`${import.meta.env.VITE_JAVA_URL}/users`)
       .then((res) => res.json())
@@ -72,12 +72,11 @@ function ChatPage({ user, token }) {
       .catch((err) => console.error("Error fetching users:", err));
   }, [user, isDesktop]);
 
-  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING + SOUNDBOARD)
+  // WebSocket Central Logic
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
     
-    // RESTORED: The /ws is back so it perfectly matches Python's @app.websocket("/api/ws/ws")
     const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}/ws?token=${token}&receiver=${receiver}`);
     
     ws.onopen = () => { socketRef.current = ws; };
@@ -86,58 +85,43 @@ function ChatPage({ user, token }) {
       try {
         const data = JSON.parse(event.data); 
         
+        // 1. FILTER: Is this a system command? (Check this for EVERY message)
+        const isSystem = typeof data.content === 'string' && (
+            data.content.startsWith("__SFX_") || 
+            ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content)
+        );
+
+        // 2. LOGIC: Trigger actions if the message is from someone else
         if (data.sender !== user) {
-            // --- MANUAL SOUNDBOARD IF-ELSE BLOCK ---
-            if (data.content === "__SFX_1__") {
-                sfxPlayerRef.current.src = '/sfx1.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_2__") {
-                sfxPlayerRef.current.src = '/sfx2.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_3__") {
-                sfxPlayerRef.current.src = '/sfx3.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_4__") {
-                sfxPlayerRef.current.src = '/sfx4.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_5__") {
-                sfxPlayerRef.current.src = '/sfx5.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_6__") {
-                sfxPlayerRef.current.src = '/sfx6.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_7__") {
-                sfxPlayerRef.current.src = '/sfx7.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_8__") {
-                sfxPlayerRef.current.src = '/sfx8.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_9__") {
-                sfxPlayerRef.current.src = '/sfx9.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
-            } else if (data.content === "__SFX_10__") {
-                sfxPlayerRef.current.src = '/sfx10.mp3';
-                sfxPlayerRef.current.play().catch(e => console.log(e));
+            // Soundboard Handler
+            if (data.content.startsWith("__SFX_")) {
+                const sfxNum = data.content.split("_")[3]; // Extract number from __SFX_X__
+                sfxPlayerRef.current.src = `/sfx${sfxNum}.mp3`;
+                sfxPlayerRef.current.play().catch(e => console.log("SFX Play Error:", e));
             }
-            // --- CALL SIGNALLING ---
+            // Call Signalling Handler
             else if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
             else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
             else if (data.content === "__CALL_ENDED__") {
-                setIncomingCallFrom(null); setActiveCallReceiver(null); setPeerAccepted(false);      
+                setIncomingCallFrom(null); 
+                setActiveCallReceiver(null); 
+                setPeerAccepted(false);      
             } 
             else if (data.content === "__CALL_DECLINED__") {
-                setActiveCallReceiver(null); setPeerAccepted(false);
+                setActiveCallReceiver(null); 
+                setPeerAccepted(false);
                 alert(`${data.sender} declined the call.`); 
             }
-
-            const isSystem = data.content.startsWith("__SFX_") || 
-                           ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content);
-            if (isSystem) return;
         }
 
+        // 3. EXIT: If it was a system command, stop here so it doesn't show in chat
+        if (isSystem) return;
+
+        // 4. DISPLAY: It's a real message, add it to the UI
         const newMessage = { id: Date.now(), text: data.content, isMe: data.sender !== receiver };
         setMessages((prev) => [...prev, newMessage]);
-      } catch (error) { console.log("WS Error:", event.data); }
+        
+      } catch (error) { console.log("WS Data Error:", event.data); }
     };
 
     return () => { ws.close(); };
@@ -145,7 +129,7 @@ function ChatPage({ user, token }) {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // AUDIO MANAGEMENT
+  // Ringtone / Dialtone Management
   useEffect(() => {
       ringtoneRef.current.loop = true;
       if (incomingCallFrom) ringtoneRef.current.play().catch(e => console.log(e));
@@ -159,7 +143,10 @@ function ChatPage({ user, token }) {
   }, [activeCallReceiver, peerAccepted]);
 
   const handleSend = () => {
-    if (input.trim() !== "" && socketRef.current) { socketRef.current.send(input); setInput(""); } 
+    if (input.trim() !== "" && socketRef.current) { 
+        socketRef.current.send(input); 
+        setInput(""); 
+    } 
   };
 
   const handleStartCall = () => {
@@ -174,40 +161,64 @@ function ChatPage({ user, token }) {
       setPeerAccepted(false); 
   }, []); 
 
-  // Select contact and switch panel without nulling receiver (Mobile Fix)
   const handleSelectContact = (contactName) => {
       setReceiver(contactName);
       setShowSidebar(false);
   };
 
-  // MIC TEST LOGIC
+  // UPDATED: Mic Test Logic with TURN Servers for Lightning
   const startMicTest = async () => {
     setIsTesting(true);
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localStreamRef.current = stream;
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+
+        const pc = new RTCPeerConnection({ 
+            iceServers: [
+                { urls: "stun:stun.relay.metered.ca:80" },
+                {
+                    urls: [
+                        "turn:global.relay.metered.ca:80",
+                        "turn:global.relay.metered.ca:80?transport=tcp",
+                        "turn:global.relay.metered.ca:443",
+                        "turns:global.relay.metered.ca:443?transport=tcp"
+                    ],
+                    username: "d7b1ac3d94ffbf5f11d5f60f",
+                    credential: "q1Q+bAyVZdzKROjh"
+                }
+            ] 
+        });
+
         peerConnectionRef.current = pc;
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        pc.ontrack = (event) => { if (audioRef.current) audioRef.current.srcObject = event.streams[0]; };
+        
+        pc.ontrack = (event) => { 
+            if (audioRef.current) audioRef.current.srcObject = event.streams[0]; 
+        };
         
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         
+        // Wait for ICE gathering
         await new Promise((resolve) => {
             if (pc.iceGatheringState === 'complete') resolve();
             else {
                 pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-                setTimeout(resolve, 2000); 
+                setTimeout(resolve, 2500); 
             }
         });
 
         const response = await fetch(`${import.meta.env.VITE_GO_WEBRTC_URL}/test-mic`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pc.localDescription)
+            method: "POST", 
+            headers: { "Content-Type": "application/json" }, 
+            body: JSON.stringify(pc.localDescription)
         });
         const answer = await response.json();
         await pc.setRemoteDescription(answer);
-    } catch (error) { setIsTesting(false); console.error(error); }
+    } catch (error) { 
+        setIsTesting(false); 
+        console.error("Mic Test Connection Failed:", error); 
+    }
   };
 
   const stopMicTest = () => {
@@ -224,7 +235,7 @@ function ChatPage({ user, token }) {
             width: { xs: "100%", md: "90%" }, maxWidth: "1100px", height: { xs: "100%", md: "85vh" }, 
             display: "flex", overflow: "hidden", borderRadius: { xs: 0, md: 3 }, border: { xs: "none", md: "1px solid #334155" } 
         }}>
-            {/* SIDEBAR */}
+            {/* Sidebar (Mobile Toggleable) */}
             <Box sx={{ 
                 width: { xs: "100%", md: "30%" }, 
                 display: { xs: showSidebar ? "flex" : "none", md: "flex" },
@@ -251,7 +262,7 @@ function ChatPage({ user, token }) {
                 </List>
             </Box>
 
-            {/* CHAT AREA */}
+            {/* Chat Area */}
             <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: showSidebar ? "none" : "flex", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
                 {receiver ? (
                     <>
@@ -269,7 +280,6 @@ function ChatPage({ user, token }) {
                             '&::-webkit-scrollbar': { width: '8px' },
                             '&::-webkit-scrollbar-track': { background: '#0b1120' },
                             '&::-webkit-scrollbar-thumb': { background: '#334155', borderRadius: '10px' },
-                            '&::-webkit-scrollbar-thumb:hover': { background: '#3b82f6' }
                         }}>
                             {messages.map((msg) => (
                                 <Box key={msg.id} sx={{ alignSelf: msg.isMe ? "flex-end" : "flex-start", maxWidth: "85%" }}>
@@ -296,7 +306,7 @@ function ChatPage({ user, token }) {
         </Paper>
       </Box>
 
-      {/* CALL UI */}
+      {/* CALL DIALOGS */}
       <Dialog open={!!incomingCallFrom} PaperProps={{ sx: { bgcolor: "#1e293b", color: "white", borderRadius: 3 }}}>
           <DialogTitle sx={{ textAlign: "center", pt: 3 }}>Incoming Call</DialogTitle>
           <DialogContent sx={{ textAlign: "center" }}>
