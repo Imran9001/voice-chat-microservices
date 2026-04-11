@@ -11,7 +11,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 
-// Additional Soundboard Icons
+// Soundboard Icons
 import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
@@ -21,6 +21,23 @@ import GavelIcon from '@mui/icons-material/Gavel';
 import QuestionMarkIcon from '@mui/icons-material/QuestionMark';
 
 import processorUrl from './processor.js?url';
+
+// THE SKELETON KEY: Centralized ICE configuration for Lightning
+const ICE_CONFIG = {
+    iceServers: [
+        { urls: "stun:stun.relay.metered.ca:80" },
+        {
+            urls: [
+                "turn:global.relay.metered.ca:80",
+                "turn:global.relay.metered.ca:80?transport=tcp",
+                "turn:global.relay.metered.ca:443",
+                "turns:global.relay.metered.ca:443?transport=tcp"
+            ],
+            username: "d7b1ac3d94ffbf5f11d5f60f",
+            credential: "q1Q+bAyVZdzKROjh"
+        }
+    ]
+};
 
 function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, sendSignal }) {
     const [status, setStatus] = useState("Connecting...");
@@ -46,14 +63,12 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     const micSourceRef = useRef(null);
     const animationFrameRef = useRef(null); 
 
-    // Helper: Format seconds to 00:00
     const formatTime = (totalSeconds) => {
         const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
         const secs = (totalSeconds % 60).toString().padStart(2, '0');
         return `${mins}:${secs}`;
     };
 
-    // Timer Logic
     useEffect(() => {
         let interval = null;
         if (status === "Connected!") {
@@ -76,7 +91,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
 
         const startCall = async () => {
             try {
-                // iOS Audio Primer
+                // iOS Audio Primer (Required for Safari/iPhone 13)
                 try {
                     const primer = new Audio();
                     primer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
@@ -91,8 +106,8 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 if (!isMounted) { stream.getTracks().forEach(t => t.stop()); return; }
                 localStreamRef.current = stream;
 
-                // WebRTC Publish
-                const pubPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                // 1. WebRTC Publish (Sending your voice to the Go Server)
+                const pubPC = new RTCPeerConnection(ICE_CONFIG);
                 publishPCRef.current = pubPC;
                 stream.getTracks().forEach(track => pubPC.addTrack(track, stream));
                 
@@ -105,17 +120,16 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 });
                 await pubPC.setRemoteDescription(await pubRes.json());
 
-                // WebRTC Subscribe
-                const subPC = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                // 2. WebRTC Subscribe (Receiving the other person's voice)
+                const subPC = new RTCPeerConnection(ICE_CONFIG);
                 subscribePCRef.current = subPC;
                 subPC.addTransceiver('audio', { direction: 'recvonly' });
 
                 subPC.ontrack = (event) => {
                     if (event.streams && event.streams[0]) {
-                        window.persistentWebRTCStream = event.streams[0];
                         if (remoteAudioRef.current) {
                             remoteAudioRef.current.srcObject = event.streams[0];
-                            remoteAudioRef.current.play().catch(err => console.warn(err));
+                            remoteAudioRef.current.play().catch(err => console.warn("Audio Play Blocked:", err));
                         }
                         
                         // Volume Meter Logic
@@ -126,6 +140,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                         analyser.fftSize = 256;
                         source.connect(analyser);
                         const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                        
                         const updateMeter = () => {
                             analyser.getByteFrequencyData(dataArray);
                             let sum = 0;
@@ -147,7 +162,10 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 });
                 await subPC.setRemoteDescription(await subRes.json());
 
-            } catch (e) { if (isMounted) setStatus("Failed"); }
+            } catch (e) { 
+                console.error("Call Setup Failed:", e);
+                if (isMounted) setStatus("Failed"); 
+            }
         };
 
         startCall();
@@ -161,13 +179,13 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
             if (audioContextRef.current) audioContextRef.current.close();
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         };
-    }, [isOpen, currentUser, receiverUser, onClose]); 
+    }, [isOpen, currentUser, receiverUser]); 
 
     const waitForICE = (pc) => new Promise(res => {
         if (pc.iceGatheringState === 'complete') res();
         else {
             pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res();
-            setTimeout(res, 2000);
+            setTimeout(res, 2500); // Increased timeout for TURN gathering
         }
     });
 
@@ -224,9 +242,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
     if (!isOpen) return null;
 
     return (
-        <Paper 
-            elevation={10} 
-            sx={{ 
+        <Paper elevation={10} sx={{ 
                 position: "fixed", 
                 top: { xs: isCollapsed ? 10 : 'auto', sm: 'auto' },
                 bottom: { xs: isCollapsed ? 'auto' : 80, sm: 30 }, 
@@ -238,8 +254,7 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                 py: isCollapsed ? 1.5 : 3, 
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)", 
                 boxShadow: "0px 10px 40px rgba(0,0,0,0.6)" 
-            }}
-        >
+        }}>
             <audio ref={remoteAudioRef} autoPlay playsInline style={{ position: 'absolute', opacity: 0 }} />
             
             <IconButton onClick={() => setIsCollapsed(!isCollapsed)} sx={{ position: 'absolute', top: 5, right: 5, color: '#94a3b8' }}>
@@ -285,13 +300,27 @@ function CallModal({ isOpen, onClose, currentUser, receiverUser, peerHasJoined, 
                         { id: 9, icon: <GavelIcon />, color: "#94a3b8" },
                         { id: 10, icon: <QuestionMarkIcon />, color: "#6366f1" },
                     ].map((sfx) => (
-                        <Fab key={sfx.id} size="small" onClick={() => { sfxPlayerRef.current.src = `/sfx${sfx.id}.mp3`; sfxPlayerRef.current.play(); sendSignal(`__SFX_${sfx.id}__`); }} sx={{ bgcolor: "#334155", color: sfx.color }}><Box sx={{ display: 'flex' }}>{sfx.icon}</Box></Fab>
+                        <Fab key={sfx.id} size="small" 
+                             onClick={() => { 
+                                 sfxPlayerRef.current.src = `/sfx${sfx.id}.mp3`; 
+                                 sfxPlayerRef.current.play(); 
+                                 sendSignal(`__SFX_${sfx.id}__`); // Trigger for the other person
+                             }} 
+                             sx={{ bgcolor: "#334155", color: sfx.color }}>
+                            {sfx.icon}
+                        </Fab>
                     ))}
                     
                     <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center', gap: 2, mt: 1 }}>
-                        <Fab size="small" onClick={toggleAIVoice} sx={{ bgcolor: isAIActive ? "#a855f7" : "#334155", color: "white" }}><SmartToyIcon /></Fab>
-                        <Fab size="small" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: "white" }}>{isMuted ? <MicOffIcon /> : <MicIcon />}</Fab>
-                        <Fab size="small" color="error" onClick={onClose} sx={{ px: 2, width: "auto", borderRadius: 10 }}><CallEndIcon sx={{ mr: 1 }} /> End</Fab>
+                        <Fab size="small" onClick={toggleAIVoice} sx={{ bgcolor: isAIActive ? "#a855f7" : "#334155", color: "white" }}>
+                            <SmartToyIcon />
+                        </Fab>
+                        <Fab size="small" onClick={toggleMute} sx={{ bgcolor: isMuted ? "#991b1b" : "#334155", color: "white" }}>
+                            {isMuted ? <MicOffIcon /> : <MicIcon />}
+                        </Fab>
+                        <Fab size="small" color="error" onClick={onClose} sx={{ px: 2, width: "auto", borderRadius: 10 }}>
+                            <CallEndIcon sx={{ mr: 1 }} /> End
+                        </Fab>
                     </Box>
                 </Box>
             )}
