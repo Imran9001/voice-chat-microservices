@@ -22,7 +22,7 @@ function ChatPage({ user, token }) {
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null); 
 
-  // MIC TEST STATES
+  // Mic Test States
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const audioRef = useRef(null); 
@@ -60,17 +60,18 @@ function ChatPage({ user, token }) {
       .then((data) => {
         const others = data.filter(u => u !== user);
         setUserList(others);
-        // Auto-select on desktop, list-view on mobile
         if (others.length > 0 && window.innerWidth > 900) setReceiver(others[0]);
       })
       .catch((err) => console.error("Error fetching users:", err));
   }, [user]);
 
-  // WEBSOCKET LOGIC
+  // WEBSOCKET LOGIC (MESSAGES + SIGNALLING + SOUNDBOARD)
   useEffect(() => {
     if (!receiver) return;
     setMessages([]);
-    const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}/ws?token=${token}&receiver=${receiver}`);
+    
+    // FIXED: Removed redundant /ws to prevent api/ws/ws error
+    const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}?token=${token}&receiver=${receiver}`);
     
     ws.onopen = () => { socketRef.current = ws; };
 
@@ -78,9 +79,8 @@ function ChatPage({ user, token }) {
       try {
         const data = JSON.parse(event.data); 
         
-        // SYSTEM SIGNALS & SOUNDBOARD
         if (data.sender !== user) {
-            // Manual Soundboard Logic (1-10)
+            // --- MANUAL SOUNDBOARD IF-ELSE BLOCK ---
             if (data.content === "__SFX_1__") {
                 sfxPlayerRef.current.src = '/sfx1.mp3';
                 sfxPlayerRef.current.play().catch(e => console.log(e));
@@ -112,7 +112,7 @@ function ChatPage({ user, token }) {
                 sfxPlayerRef.current.src = '/sfx10.mp3';
                 sfxPlayerRef.current.play().catch(e => console.log(e));
             }
-            // Call Command Logic
+            // --- CALL SIGNALLING ---
             else if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
             else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
             else if (data.content === "__CALL_ENDED__") {
@@ -120,9 +120,13 @@ function ChatPage({ user, token }) {
             } 
             else if (data.content === "__CALL_DECLINED__") {
                 setActiveCallReceiver(null); setPeerAccepted(false);
-                alert(`${data.sender} declined.`); 
+                alert(`${data.sender} declined the call.`); 
             }
-            if (data.content.startsWith("__SFX_") || ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content)) return;
+
+            // If it was a system command, don't show it as a text message
+            const isSystem = data.content.startsWith("__SFX_") || 
+                           ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content);
+            if (isSystem) return;
         }
 
         const newMessage = { id: Date.now(), text: data.content, isMe: data.sender !== receiver };
@@ -135,7 +139,7 @@ function ChatPage({ user, token }) {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  // AUDIO MANAGEMENT (Ringtone & Dial Tone)
+  // AUDIO MANAGEMENT
   useEffect(() => {
       ringtoneRef.current.loop = true;
       if (incomingCallFrom) ringtoneRef.current.play().catch(e => console.log(e));
@@ -164,7 +168,7 @@ function ChatPage({ user, token }) {
       setPeerAccepted(false); 
   }, []); 
 
-  // MIC TEST LOGIC (Corrected with ICE Waiter)
+  // MIC TEST LOGIC (Corrected ICE Gathering)
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -178,7 +182,6 @@ function ChatPage({ user, token }) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         
-        // Wait for ICE gathering
         await new Promise((resolve) => {
             if (pc.iceGatheringState === 'complete') resolve();
             else {
@@ -209,9 +212,13 @@ function ChatPage({ user, token }) {
             width: { xs: "100%", md: "90%" }, maxWidth: "1100px", height: { xs: "100%", md: "85vh" }, 
             display: "flex", overflow: "hidden", borderRadius: { xs: 0, md: 3 }, border: { xs: "none", md: "1px solid #334155" } 
         }}>
-            
             {/* SIDEBAR */}
-            <Box sx={{ width: { xs: "100%", md: "30%" }, display: { xs: receiver ? "none" : "flex", md: "flex" }, borderRight: { xs: "none", md: "1px solid #334155" }, bgcolor: "#1e293b", flexDirection: "column" }}>
+            <Box sx={{ 
+                width: { xs: "100%", md: "30%" }, 
+                display: { xs: receiver ? "none" : "flex", md: "flex" },
+                borderRight: { xs: "none", md: "1px solid #334155" }, 
+                bgcolor: "#1e293b", flexDirection: "column" 
+            }}>
                 <Box sx={{ p: 2, bgcolor: "#0f172a", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #334155" }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                         <Avatar sx={{ bgcolor: "#3b82f6" }}>{user[0]?.toUpperCase()}</Avatar>
@@ -231,7 +238,11 @@ function ChatPage({ user, token }) {
             </Box>
 
             {/* CHAT AREA */}
-            <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: receiver ? "flex" : "none", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
+            <Box sx={{ 
+                width: { xs: "100%", md: "70%" }, 
+                display: { xs: receiver ? "flex" : "none", md: "flex" }, 
+                flexDirection: "column", bgcolor: "#0b1120" 
+            }}> 
                 {receiver ? (
                     <>
                         <Box sx={{ p: 2, bgcolor: "#1e293b", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
