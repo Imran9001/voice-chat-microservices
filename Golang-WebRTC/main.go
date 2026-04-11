@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -16,7 +17,30 @@ var (
 	streamMutex   sync.Mutex
 )
 
-// getOrCreateStream retrieves an existing audio track or creates a new one for a streamID
+// getICEServers fetches credentials from Kubernetes Secrets (via Env Vars)
+// This ensures your public site is secure and Lightning can bypass firewalls.
+func getICEServers() []webrtc.ICEServer {
+	user := os.Getenv("TURN_USERNAME")
+	pass := os.Getenv("TURN_PASSWORD")
+
+	return []webrtc.ICEServer{
+		{
+			URLs: []string{"stun:stun.relay.metered.ca:80"},
+		},
+		{
+			URLs: []string{
+				"turn:global.relay.metered.ca:80",
+				"turn:global.relay.metered.ca:80?transport=tcp",
+				"turn:global.relay.metered.ca:443",
+				"turns:global.relay.metered.ca:443?transport=tcp",
+			},
+			Username:   user,
+			Credential: pass,
+		},
+	}
+}
+
+// getOrCreateStream retrieves an existing audio track or creates a new one
 func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 	streamMutex.Lock()
 	defer streamMutex.Unlock()
@@ -25,7 +49,6 @@ func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 		return track
 	}
 
-	// Create a new Opus audio track
 	newTrack, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion",
 	)
@@ -39,7 +62,6 @@ func getOrCreateStream(streamID string) *webrtc.TrackLocalStaticRTP {
 	return newTrack
 }
 
-// removeStream deletes a track from the map when a call ends to free memory
 func removeStream(streamID string) {
 	streamMutex.Lock()
 	defer streamMutex.Unlock()
@@ -50,10 +72,9 @@ func removeStream(streamID string) {
 }
 
 func main() {
-	// Routes
-	http.HandleFunc("/api/webrtc/publish", handlePublish)   // Receive mic audio
-	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe) // Send audio to listener
-	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)   // 3-second echo test
+	http.HandleFunc("/api/webrtc/publish", handlePublish)   
+	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe) 
+	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)   
 
 	fmt.Println("Go WebRTC Media Server running on :8081")
 	if err := http.ListenAndServe(":8081", nil); err != nil {
@@ -74,20 +95,19 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&offer); err != nil { return }
 
 	streamTrack := getOrCreateStream(streamID)
-
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: getICEServers(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(config)
-	if err != nil { panic(err) }
-
-	// CRITICAL: Cleanup on Disconnect
 	peerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		fmt.Printf("PUBLISH ICE [%s]: %s\n", streamID, state.String())
 		if state == webrtc.ICEConnectionStateDisconnected || state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {
 			peerConnection.Close()
-			removeStream(streamID) // Free memory
+			removeStream(streamID)
 		}
 	})
 
@@ -96,11 +116,12 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 1500)
 		for {
 			n, _, err := track.Read(buf)
-			if err != nil {
-				fmt.Printf("Inbound stream stopped for [%s]\n", streamID)
-				return
-			}
-			streamTrack.Write(buf[:n])
+			if err != nil { return }
+
+			// Buffer copy prevents audio glitches when multiple people are listening
+			safePacket := make([]byte, n)
+			copy(safePacket, buf[:n])
+			streamTrack.Write(safePacket)
 		}
 	})
 
@@ -115,15 +136,14 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&offer); err != nil { return }
 
 	streamTrack := getOrCreateStream(streamID)
-
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: getICEServers(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(config)
-	if err != nil { panic(err) }
-
-	// CRITICAL: Cleanup on Disconnect
 	peerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		fmt.Printf("SUBSCRIBE ICE [%s]: %s\n", streamID, state.String())
 		if state == webrtc.ICEConnectionStateDisconnected || state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateClosed {
@@ -134,7 +154,6 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	rtpSender, err := peerConnection.AddTrack(streamTrack)
 	if err != nil { panic(err) }
 
-	// Read incoming RTCP (required to keep connection alive)
 	go func() {
 		rtcpBuf := make([]byte, 1500)
 		for {
@@ -148,13 +167,11 @@ func handleSubscribe(w http.ResponseWriter, r *http.Request) {
 func handleTestMic(w http.ResponseWriter, r *http.Request) {
 	if handleCORS(w, r) { return }
 	var offer webrtc.SessionDescription
-	json.NewDecoder(r.Body).Decode(&offer)
+	if err := json.NewDecoder(r.Body).Decode(&offer); err != nil { return }
 
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
-	}
-
-	peerConnection, _ := webrtc.NewPeerConnection(config)
+	peerConnection, _ := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: getICEServers(),
+	})
 	
 	peerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		fmt.Printf("TEST-MIC ICE: %s\n", state.String())
@@ -180,7 +197,6 @@ func handleTestMic(w http.ResponseWriter, r *http.Request) {
 			if err != nil { return }
 			packet := make([]byte, n)
 			copy(packet, buf[:n])
-			// Echo logic: Send audio back after 3 seconds
 			go func(audioData []byte) {
 				time.Sleep(3 * time.Second)
 				outputTrack.Write(audioData)
@@ -191,6 +207,7 @@ func handleTestMic(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCORS(w http.ResponseWriter, r *http.Request) bool {
+	// For public production, you should eventually change "*" to "https://voicechat.it.com"
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -201,7 +218,6 @@ func completeHandshake(w http.ResponseWriter, pc *webrtc.PeerConnection, offer w
 	pc.SetRemoteDescription(offer)
 	answer, _ := pc.CreateAnswer(nil)
 	pc.SetLocalDescription(answer)
-	// Wait for ICE gathering to finish before responding
 	<-webrtc.GatheringCompletePromise(pc)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pc.LocalDescription())
