@@ -33,7 +33,7 @@ function ChatPage({ user, token }) {
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isTesting, setIsTesting] = useState(false); 
 
-  // Voice Call States
+  // Voice Call States - The "Ghost Timer" Fix starts here
   const [activeCallReceiver, setActiveCallReceiver] = useState(null); 
   const [incomingCallFrom, setIncomingCallFrom] = useState(null);     
   const [peerAccepted, setPeerAccepted] = useState(false); 
@@ -85,7 +85,7 @@ function ChatPage({ user, token }) {
       try {
         const data = JSON.parse(event.data); 
         
-        // 1. FILTER: Is this a system command? (Check this for EVERY message)
+        // 1. FILTER: Is this a system command?
         const isSystem = typeof data.content === 'string' && (
             data.content.startsWith("__SFX_") || 
             ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content)
@@ -93,16 +93,19 @@ function ChatPage({ user, token }) {
 
         // 2. LOGIC: Trigger actions if the message is from someone else
         if (data.sender !== user) {
-            // Soundboard Handler
             if (data.content.startsWith("__SFX_")) {
-                const sfxNum = data.content.split("_")[3]; // Extract number from __SFX_X__
+                const sfxNum = data.content.split("_")[3]; 
                 sfxPlayerRef.current.src = `/sfx${sfxNum}.mp3`;
                 sfxPlayerRef.current.play().catch(e => console.log("SFX Play Error:", e));
             }
-            // Call Signalling Handler
-            else if (data.content === "__CALL__") setIncomingCallFrom(data.sender);
-            else if (data.content === "__CALL_ACCEPTED__") setPeerAccepted(true);
+            else if (data.content === "__CALL__") {
+                setIncomingCallFrom(data.sender);
+            }
+            else if (data.content === "__CALL_ACCEPTED__") {
+                setPeerAccepted(true);
+            }
             else if (data.content === "__CALL_ENDED__") {
+                // RESET ALL CALL STATES ON DISCONNECT
                 setIncomingCallFrom(null); 
                 setActiveCallReceiver(null); 
                 setPeerAccepted(false);      
@@ -114,10 +117,8 @@ function ChatPage({ user, token }) {
             }
         }
 
-        // 3. EXIT: If it was a system command, stop here so it doesn't show in chat
         if (isSystem) return;
 
-        // 4. DISPLAY: It's a real message, add it to the UI
         const newMessage = { id: Date.now(), text: data.content, isMe: data.sender !== receiver };
         setMessages((prev) => [...prev, newMessage]);
         
@@ -132,14 +133,22 @@ function ChatPage({ user, token }) {
   // Ringtone / Dialtone Management
   useEffect(() => {
       ringtoneRef.current.loop = true;
-      if (incomingCallFrom) ringtoneRef.current.play().catch(e => console.log(e));
-      else { ringtoneRef.current.pause(); ringtoneRef.current.currentTime = 0; }
+      if (incomingCallFrom) {
+          ringtoneRef.current.play().catch(e => console.log("Audio play blocked", e));
+      } else {
+          ringtoneRef.current.pause();
+          ringtoneRef.current.currentTime = 0;
+      }
   }, [incomingCallFrom]);
 
   useEffect(() => {
       dialToneRef.current.loop = true;
-      if (activeCallReceiver && !peerAccepted) dialToneRef.current.play().catch(e => console.log(e));
-      else { dialToneRef.current.pause(); dialToneRef.current.currentTime = 0; }
+      if (activeCallReceiver && !peerAccepted) {
+          dialToneRef.current.play().catch(e => console.log("Audio play blocked", e));
+      } else {
+          dialToneRef.current.pause();
+          dialToneRef.current.currentTime = 0;
+      }
   }, [activeCallReceiver, peerAccepted]);
 
   const handleSend = () => {
@@ -155,10 +164,12 @@ function ChatPage({ user, token }) {
       setActiveCallReceiver(receiver);
   };
 
+  // THE "GHOST TIMER" FIX: Clear all state here
   const handleEndCall = useCallback(() => {
       if (socketRef.current) socketRef.current.send("__CALL_ENDED__");
       setActiveCallReceiver(null);
       setPeerAccepted(false); 
+      setIncomingCallFrom(null);
   }, []); 
 
   const handleSelectContact = (contactName) => {
@@ -166,7 +177,6 @@ function ChatPage({ user, token }) {
       setShowSidebar(false);
   };
 
-  // UPDATED: Mic Test Logic with TURN Servers for Lightning
   const startMicTest = async () => {
     setIsTesting(true);
     try {
@@ -199,7 +209,6 @@ function ChatPage({ user, token }) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         
-        // Wait for ICE gathering
         await new Promise((resolve) => {
             if (pc.iceGatheringState === 'complete') resolve();
             else {
@@ -235,7 +244,6 @@ function ChatPage({ user, token }) {
             width: { xs: "100%", md: "90%" }, maxWidth: "1100px", height: { xs: "100%", md: "85vh" }, 
             display: "flex", overflow: "hidden", borderRadius: { xs: 0, md: 3 }, border: { xs: "none", md: "1px solid #334155" } 
         }}>
-            {/* Sidebar (Mobile Toggleable) */}
             <Box sx={{ 
                 width: { xs: "100%", md: "30%" }, 
                 display: { xs: showSidebar ? "flex" : "none", md: "flex" },
@@ -262,7 +270,6 @@ function ChatPage({ user, token }) {
                 </List>
             </Box>
 
-            {/* Chat Area */}
             <Box sx={{ width: { xs: "100%", md: "70%" }, display: { xs: showSidebar ? "none" : "flex", md: "flex" }, flexDirection: "column", bgcolor: "#0b1120" }}> 
                 {receiver ? (
                     <>
