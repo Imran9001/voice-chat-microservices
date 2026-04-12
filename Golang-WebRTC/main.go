@@ -18,7 +18,6 @@ var (
 )
 
 // getICEServers fetches credentials from Kubernetes Secrets (via Env Vars)
-// This ensures your public site is secure and Lightning can bypass firewalls.
 func getICEServers() []webrtc.ICEServer {
 	user := os.Getenv("TURN_USERNAME")
 	pass := os.Getenv("TURN_PASSWORD")
@@ -72,9 +71,10 @@ func removeStream(streamID string) {
 }
 
 func main() {
+	// API Endpoints
 	http.HandleFunc("/api/webrtc/publish", handlePublish)   
 	http.HandleFunc("/api/webrtc/subscribe", handleSubscribe) 
-	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)   
+	http.HandleFunc("/api/webrtc/test-mic", handleTestMic)    
 
 	fmt.Println("Go WebRTC Media Server running on :8081")
 	if err := http.ListenAndServe(":8081", nil); err != nil {
@@ -118,7 +118,6 @@ func handlePublish(w http.ResponseWriter, r *http.Request) {
 			n, _, err := track.Read(buf)
 			if err != nil { return }
 
-			// Buffer copy prevents audio glitches when multiple people are listening
 			safePacket := make([]byte, n)
 			copy(safePacket, buf[:n])
 			streamTrack.Write(safePacket)
@@ -207,18 +206,28 @@ func handleTestMic(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCORS(w http.ResponseWriter, r *http.Request) bool {
-	// For public production, you should eventually change "*" to "https://voicechat.it.com"
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	return r.Method == "OPTIONS"
 }
 
+// OPTIMIZED: Handshake with 1-second ICE gathering timeout
 func completeHandshake(w http.ResponseWriter, pc *webrtc.PeerConnection, offer webrtc.SessionDescription) {
 	pc.SetRemoteDescription(offer)
 	answer, _ := pc.CreateAnswer(nil)
 	pc.SetLocalDescription(answer)
-	<-webrtc.GatheringCompletePromise(pc)
+
+	// TRICKLE ICE OPTIMIZATION:
+	// We wait for candidates, but we don't wait forever.
+	// 1 second is usually enough for STUN and basic TURN candidates to gather.
+	select {
+	case <-webrtc.GatheringCompletePromise(pc):
+		// All candidates gathered successfully
+	case <-time.After(1 * time.Second):
+		// Timeout reached, sending partial candidate list to reduce connection delay
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pc.LocalDescription())
 }
