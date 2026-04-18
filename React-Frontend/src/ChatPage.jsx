@@ -79,19 +79,31 @@ function ChatPage({ user, token }) {
     
     const ws = new WebSocket(`${import.meta.env.VITE_PYTHON_WS_URL}/ws?token=${token}&receiver=${receiver}`);
     
-    ws.onopen = () => { socketRef.current = ws; };
+    // 1. ADD HEARTBEAT INTERVAL VARIABLE
+    let heartbeatInterval;
+
+    ws.onopen = () => { 
+        socketRef.current = ws; 
+        
+        // 2. START THE HEARTBEAT (Send a ping every 30 seconds)
+        heartbeatInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send("__PING__");
+            }
+        }, 30000);
+    };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data); 
         
-        // 1. FILTER: Is this a system command?
+        // 3. FILTER: Is this a system command? (Added __PING__ to be ignored)
         const isSystem = typeof data.content === 'string' && (
             data.content.startsWith("__SFX_") || 
-            ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__"].includes(data.content)
+            ["__CALL__", "__CALL_ACCEPTED__", "__CALL_ENDED__", "__CALL_DECLINED__", "__PING__"].includes(data.content)
         );
 
-        // 2. LOGIC: Trigger actions if the message is from someone else
+        // 4. LOGIC: Trigger actions if the message is from someone else
         if (data.sender !== user) {
             if (data.content.startsWith("__SFX_")) {
                 const sfxNum = data.content.split("_")[3]; 
@@ -117,7 +129,7 @@ function ChatPage({ user, token }) {
             }
         }
 
-        if (isSystem) return;
+        if (isSystem) return; // __PING__ commands stop here
 
         const newMessage = { id: Date.now(), text: data.content, isMe: data.sender !== receiver };
         setMessages((prev) => [...prev, newMessage]);
@@ -125,7 +137,11 @@ function ChatPage({ user, token }) {
       } catch (error) { console.log("WS Data Error:", event.data); }
     };
 
-    return () => { ws.close(); };
+    return () => { 
+        // 5. CLEANUP HEARTBEAT
+        clearInterval(heartbeatInterval);
+        ws.close(); 
+    };
   }, [receiver, token, user]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
